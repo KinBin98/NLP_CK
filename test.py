@@ -43,41 +43,67 @@ def load_checkpoint_model(checkpoint_path, model_name):
     return model, tokenizer
 
 
-def predict_batch(model, tokenizer, prompts, max_new_tokens=20):
-    """Predict với format đúng Qwen3 chat template và xử lý output"""
+def predict_batch(model, tokenizer, prompts, max_new_tokens=50):
+    """Predict với format đúng Qwen3 chat template"""
     formatted_prompts = []
     for p in prompts:
         messages = [{"role": "user", "content": p}]
         formatted = tokenizer.apply_chat_template(
             messages,
             tokenize=False,
-            add_generation_prompt=True
+            add_generation_prompt=True  # Quan trọng: thêm <|im_start|>assistant\n
         )
         formatted_prompts.append(formatted)
-
+    
     inputs = tokenizer(formatted_prompts, return_tensors="pt", padding=True, truncation=True).to(model.device)
-    outputs = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
-    decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
-
-    # Làm sạch output: chỉ lấy phần trả lời của assistant
+    
+    # Generation parameters theo khuyến nghị từ Qwen3 team
+    outputs = model.generate(
+        **inputs, 
+        max_new_tokens=max_new_tokens,
+        temperature=0.7,  
+        top_p=0.8,      
+        top_k=20,   
+        do_sample=True, 
+        pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id
+    )
+    
+    decoded = tokenizer.batch_decode(outputs, skip_special_tokens=False)  # Không skip special tokens
+    
+    # Lấy phần response của assistant
     cleaned_outputs = []
     for text in decoded:
-        if "assistant\n" in text:
-            text = text.split("assistant\n", 1)[1]
-        cleaned_outputs.append(text.strip())
+        # Tìm phần bắt đầu của assistant response
+        if "<|im_start|>assistant\n" in text:
+            response = text.split("<|im_start|>assistant\n", 1)[1]
+            # Cắt tại <|im_end|> nếu có
+            if "<|im_end|>" in response:
+                response = response.split("<|im_end|>", 1)[0]
+            cleaned_outputs.append(response.strip())
+        else:
+            # Fallback: lấy toàn bộ text
+            cleaned_outputs.append(text.strip())
+    
     return cleaned_outputs
-
 
 def extract_answer(generated, prompt):
     """Trích xuất câu trả lời từ output của model"""
     if not generated or len(generated.strip()) == 0:
+        # Log warning để debug
+        print(f"Warning: Empty generation for prompt: {prompt[:100]}...")
         return ""
 
     # Lấy dòng đầu tiên không rỗng
     lines = generated.strip().splitlines()
     answer = lines[0].strip() if lines else ""
+    
     # Bỏ token đặc biệt nếu có
-    answer = answer.replace("<|im_end|>", "").replace("</s>", "").strip()
+    answer = answer.replace("<|im_end|>", "").replace("</s>", "").replace("<|endoftext|>", "").strip()
+    
+    # Nếu answer vẫn rỗng, thử lấy toàn bộ generated text (có thể không có line break)
+    if not answer and generated.strip():
+        answer = generated.strip()
+    
     return answer
 
 
@@ -91,6 +117,16 @@ def normalize_label(text):
 def _normalize_classification_output(text):
     if text is None:
         return ""
+    # Tìm số đầu tiên trong text (cho AG_NEWS labels: 0,1,2,3)
+    match = re.search(r'\b[0-3]\b', str(text))
+    if match:
+        return match.group(0)
+    
+    # Fallback: tìm bất kỳ số nào
+    match = re.search(r'\b\d+\b', str(text))
+    if match:
+        return match.group(0)
+    
     cleaned = re.sub(r"[^a-zA-Z0-9_ ]", " ", str(text))
     cleaned = cleaned.strip().lower()
     return cleaned.split()[0] if cleaned else ""
@@ -113,8 +149,18 @@ def _label_to_id(task, label_text):
         return label_text
     if label_text is None:
         return None
+    
+    # Thử convert trực tiếp nếu label_text là số
+    try:
+        label_int = int(label_text)
+        if 0 <= label_int < len(task.label_map):
+            return label_int
+    except (ValueError, TypeError):
+        pass
+    
     reverse_map = {normalize_label(v): k for k, v in task.label_map.items()}
-    return reverse_map.get(normalize_label(str(label_text)), None)
+    normalized = normalize_label(str(label_text))
+    return reverse_map.get(normalized, None)
 
 
 def _label_to_str(label):
@@ -146,25 +192,30 @@ def run_task(task, dataset, method, model, tokenizer, split_name):
     if method == "baseline":
         print(f"  📌 Baseline: using pretrained LLM (no fine-tuning) for {task.name}")
         y_pred = []
-        batch_size = 4
+        batch_size = 2  # Giảm batch size để debug
         for i in range(0, len(prompts), batch_size):
+            print(f"    Processing batch {i//batch_size + 1}/{(len(prompts)-1)//batch_size + 1}")
             batch_prompts = prompts[i:i + batch_size]
             decoded = predict_batch(model, tokenizer, batch_prompts)
             for prompt, gen in zip(batch_prompts, decoded):
                 ans = extract_answer(gen, prompt)
+                print(f"    Extracted answer: '{ans}'")
+                
                 if task.task_type == "classification":
                     pred = _label_to_id(task, _normalize_classification_output(ans))
+                    print(f"    Prediction ID: {pred}")
                     y_pred.append(pred)
                 elif task.task_type == "qa":
                     y_pred.append(ans)
                 else:
-                    y_pred.append(_extract_first_float(ans))
+                    pred = _extract_first_float(ans)
+                    y_pred.append(pred)
         return y_true_text, y_pred, prompts
 
     elif method == "checkpoint":
         print(f"  📌 Checkpoint: using fine-tuned LLM for {task.name}")
         y_pred = []
-        batch_size = 4
+        batch_size = 2
         for i in range(0, len(prompts), batch_size):
             batch_prompts = prompts[i:i + batch_size]
             decoded = predict_batch(model, tokenizer, batch_prompts)
@@ -189,6 +240,7 @@ def main(args):
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
+    print(f"Loading dataset from {args.dataset_dir}")
     dataset = load_from_disk(args.dataset_dir)
 
     model = None
@@ -212,6 +264,7 @@ def main(args):
         if args.task and task.name != args.task:
             continue
 
+        print(f"\n📊 Processing task: {task.name}")
         y_true_text, y_pred, prompts = run_task(
             task,
             dataset,
@@ -240,7 +293,7 @@ def main(args):
                 "label": _label_to_str(label),
                 "prediction": _prediction_to_str(pred),
                 "method": args.method,
-                "prompt": prompt,  # Luôn lưu prompt
+                "prompt": prompt,
             })
 
     # Luôn ghi đủ 6 cột
@@ -253,10 +306,14 @@ def main(args):
 
     print(f"\n✅ Saved predictions to {args.output_file}")
 
+    # Thống kê
+    non_empty_preds = sum(1 for row in rows if row['prediction'] and row['prediction'].strip())
+    print(f"\n📊 Statistics: {non_empty_preds}/{len(rows)} predictions are non-empty")
+
     # Preview 5 dòng đầu
     print("\n📋 Preview first 5 rows:")
     for i, row in enumerate(rows[:5]):
-        print(f"  {i+1}. {row}")
+        print(f"  {i+1}. Task: {row['task']}, Label: {row['label']}, Pred: {row['prediction']}")
 
 
 if __name__ == "__main__":
