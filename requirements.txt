@@ -1,0 +1,17 @@
+torch
+transformers
+datasets
+fsspec>=2023.10.0
+huggingface_hub>=0.20.0
+trl
+peft
+accelerate
+bitsandbytes
+evaluate
+scikit-learn
+pandas
+matplotlib
+seaborn
+scipy
+numpy
+tqdm
