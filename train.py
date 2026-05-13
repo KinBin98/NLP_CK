@@ -5,6 +5,7 @@ from datasets import load_from_disk
 from transformers import TrainingArguments, set_seed
 from trl import SFTTrainer
 from unsloth import FastLanguageModel
+from unsloth.chat_templates import get_chat_template
 
 from config import (
     DEFAULT_MODEL,
@@ -26,7 +27,9 @@ def load_model(model_name):
         dtype=None,
         load_in_4bit=True,
     )
-
+    tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
+    tokenizer.padding_side = 'left'
+    
     model = FastLanguageModel.get_peft_model(
         model,
         r=16,
@@ -35,21 +38,24 @@ def load_model(model_name):
         bias="none",
         use_gradient_checkpointing="unsloth",
         target_modules=[
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj",
         ],
     )
     return model, tokenizer
 
 
-def format_examples(examples, eos_token=""):
-    eos_suffix = eos_token or ""
-    return {"text": [f"{p} {r}{eos_suffix}" for p, r in zip(examples["prompt"], examples["response"])]}
+def format_examples(examples, tokenizer):
+    """Format dữ liệu đúng chat template"""
+    texts = []
+    for p, r in zip(examples["prompt"], examples["response"]):
+        messages = [
+            {"role": "user", "content": p},
+            {"role": "assistant", "content": r}
+        ]
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+        texts.append(text)
+    return {"text": texts}
 
 
 def main(args):
@@ -58,7 +64,7 @@ def main(args):
     # Load dataset
     dataset = load_from_disk(args.dataset_dir)
     
-    # Xác định chế độ: multi-task hay single-task
+    # Xác định chế độ
     if args.task:
         print(f"🎯 Single-task mode: {args.task}")
         train_ds = dataset["train"].filter(lambda ex: ex["task"] == args.task)
@@ -70,34 +76,33 @@ def main(args):
     
     print(f"📊 Training samples: {len(train_ds):,}")
     
+    # Validation
     eval_ds = None
     if "validation" in dataset:
         if args.task:
             eval_ds = dataset["validation"].filter(lambda ex: ex["task"] == args.task)
         else:
             eval_ds = dataset["validation"]
+        print(f"📊 Validation samples: {len(eval_ds):,}")
 
     # Load model
     model, tokenizer = load_model(args.model_name)
     bf16 = torch.cuda.is_bf16_supported()
 
-    eos_token = tokenizer.eos_token or ""
-
     # Format dữ liệu
     train_ds = train_ds.map(
-        lambda ex: format_examples(ex, eos_token),
+        lambda x: format_examples(x, tokenizer),
         batched=True,
         remove_columns=train_ds.column_names,
     )
     if eval_ds is not None:
         eval_ds = eval_ds.map(
-            lambda ex: format_examples(ex, eos_token),
+            lambda x: format_examples(x, tokenizer),
             batched=True,
             remove_columns=eval_ds.column_names,
         )
 
     # Training arguments
-    eval_strategy = "steps" if eval_ds is not None else "no"
     training_args = TrainingArguments(
         output_dir=os.path.join(args.output_dir, mode),
         per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
@@ -110,7 +115,7 @@ def main(args):
         logging_steps=10,
         save_steps=200,
         save_total_limit=2,
-        evaluation_strategy=eval_strategy,
+        evaluation_strategy="steps" if eval_ds else "no",
         eval_steps=200,
         optim="adamw_8bit",
         report_to="none",
@@ -130,37 +135,19 @@ def main(args):
     trainer.train()
     
     # Lưu checkpoint
-    ckpt_path = args.checkpoint
-    if args.task:
-        # Nếu single-task, thêm task name vào checkpoint path
-        ckpt_dir = os.path.dirname(ckpt_path)
-        ckpt_name = f"{args.task}_{os.path.basename(ckpt_path)}"
-        ckpt_path = os.path.join(ckpt_dir, ckpt_name)
-    
+    ckpt_path = args.checkpoint or os.path.join(args.output_dir, f"{mode}_checkpoint.pt")
     os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
     torch.save(trainer.model.state_dict(), ckpt_path)
     print(f"✅ Saved checkpoint to {ckpt_path}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train model (multi-task or single-task)")
-    parser.add_argument("--dataset_dir", type=str, default="data_processed",
-                        help="Path to processed dataset")
-    parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL,
-                        help="Base model name")
-    parser.add_argument("--output_dir", type=str, default=OUTPUT_DIR,
-                        help="Output directory for checkpoints")
-    parser.add_argument("--task", type=str, default=None,
-                        help="Task name (e.g., 'sst2', 'mnli') for single-task. Omit for multi-task")
-    parser.add_argument("--checkpoint", type=str, default=None,
-                        help="Checkpoint path (optional, auto-generated if not provided)")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset_dir", type=str, default="data/merged")
+    parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL)
+    parser.add_argument("--output_dir", type=str, default=OUTPUT_DIR)
+    parser.add_argument("--task", type=str, default=None)
+    parser.add_argument("--checkpoint", type=str, default=None)
     args = parser.parse_args()
-    
-    # Auto-generate checkpoint path if not provided
-    if args.checkpoint is None:
-        if args.task:
-            args.checkpoint = os.path.join(args.output_dir, f"checkpoint_{args.task}.pt")
-        else:
-            args.checkpoint = os.path.join(args.output_dir, "checkpoint_multi.pt")
     
     main(args)

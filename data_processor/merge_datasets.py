@@ -11,18 +11,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from config import TASKS
 
-# Mapping task name to folder name
+# ✅ SỬA: Đường dẫn đúng với cấu trúc thư mục mới
 TASK_FOLDERS = {
-    "sst2": "data/data_sst2_v2",
-    "mnli": "data/data_mnli",
-    "cola": "data/data_cola",
-    "stsb": "data/data_stsb",
-    "squad": "data/data_squad",
-    "ag_news": "data/data_ag_news",
+    "sst2": "data/sst2",
+    "mnli": "data/mnli",
+    "cola": "data/cola",
+    "stsb": "data/stsb",
+    "squad": "data/squad",
+    "ag_news": "data/ag_news",
 }
 
 
-def merge_datasets(output_dir="data_processed", shuffle_seed=42):
+def merge_datasets(output_dir="data/merged", shuffle_seed=42):
     """Merge all individual task datasets into ONE consolidated dataset with SHUFFLING."""
     
     print("\n" + "="*70)
@@ -83,7 +83,7 @@ def merge_datasets(output_dir="data_processed", shuffle_seed=42):
     print(f"{'TOTAL':<14} {len(merged.get('train', [])):>10,} {len(merged.get('validation', [])):>12,} {len(merged.get('test', [])):>10,}")
     print("="*70)
     
-    # 4. Kiểm tra phân bố task sau khi trộn (lấy 100 mẫu đầu)
+    # 4. Kiểm tra phân bố task sau khi trộn
     print("\n🔍 CHECKING TASK DISTRIBUTION (first 100 samples of train):")
     print("-"*50)
     if "train" in merged:
@@ -100,56 +100,15 @@ def merge_datasets(output_dir="data_processed", shuffle_seed=42):
     merged.save_to_disk(output_dir)
     print(f"✅ Merged dataset saved!")
     
-    # 6. Quick validation
-    print("\n🔍 SAMPLE VALIDATION:")
-    print("-"*50)
-    for split in ["train", "validation", "test"]:
-        if split in merged and len(merged[split]) > 0:
-            # Lấy 5 mẫu đầu để xem
-            print(f"\n  {split.upper()} - first 5 samples:")
-            for i in range(min(5, len(merged[split]))):
-                sample = merged[split][i]
-                print(f"    [{i+1}] Task: {sample.get('task'):10} | Response: {sample.get('response', '')[:30]}...")
-    
     return merged
-
-
-def verify_shuffling(dataset_path="data_processed"):
-    """Kiểm tra xem dữ liệu đã được trộn đều chưa"""
-    from datasets import load_from_disk
-    
-    ds = load_from_disk(dataset_path)
-    
-    print("\n" + "="*70)
-    print("🔍 VERIFYING SHUFFLING (Task distribution)")
-    print("="*70)
-    
-    for split in ["train", "validation", "test"]:
-        if split not in ds:
-            continue
-        
-        # Lấy 200 mẫu đầu
-        sample_size = min(200, len(ds[split]))
-        task_seq = [ds[split][i]['task'] for i in range(sample_size)]
-        
-        # Đếm số lần chuyển đổi giữa các task
-        switches = sum(1 for i in range(1, len(task_seq)) if task_seq[i] != task_seq[i-1])
-        
-        print(f"\n{split.upper()}:")
-        print(f"  First 20 tasks: {task_seq[:20]}")
-        print(f"  Task switches in {sample_size} samples: {switches} (good: data is mixed)")
 
 
 if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", type=str, default="data_processed")
+    parser.add_argument("--output_dir", type=str, default="data/merged")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--verify", action="store_true", help="Verify shuffling after merge")
     args = parser.parse_args()
     
     merge_datasets(args.output_dir, shuffle_seed=args.seed)
-    
-    if args.verify:
-        verify_shuffling(args.output_dir)

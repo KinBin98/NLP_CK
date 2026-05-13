@@ -4,25 +4,34 @@ from datasets import DatasetDict, concatenate_datasets, load_dataset
 
 
 def make_prompt(example):
-    return "\n".join(
-        [
-            "Task: STS-B",
-            f"Sentence1: {example.get('sentence1', '')}",
-            f"Sentence2: {example.get('sentence2', '')}",
-            "Answer:",
-        ]
-    )
+    return f"""Task: STS-B (Semantic Textual Similarity)
+
+Rate the similarity between two sentences on a scale from 0 to 5.
+
+Scale:
+- 0: Completely different meaning
+- 1: Mostly different
+- 2: Slightly similar
+- 3: Moderately similar
+- 4: Very similar
+- 5: Completely equivalent meaning
+
+Sentence 1: {example.get('sentence1', '')}
+Sentence 2: {example.get('sentence2', '')}
+
+Similarity score (0-5):"""
 
 
 def map_example(example):
     label_value = example.get("label", None)
+    # ✅ Giữ nguyên float (STS-B là regression)
     if label_value in (-1, None):
-        label_text = ""
+        response = ""
     else:
-        label_text = str(float(label_value))
+        response = f"{float(label_value):.1f}"  # Định dạng 1 số thập phân
     return {
         "prompt": make_prompt(example),
-        "response": label_text,
+        "response": response,
         "task": "stsb",
     }
 
@@ -41,20 +50,21 @@ def _select_from_train(train_raw, used_indices, count):
     return train_raw.select(selected), used_indices
 
 
-def build_stsb_dataset(output_dir="data_stsb", max_train=10000, max_val=2000, max_test=3000, seed=42):
+def build_stsb_dataset(output_dir="data/stsb", max_train=10000, max_val=2000, max_test=3000, seed=42):
     output_dir = os.path.abspath(output_dir)
-    if "notebooks" in output_dir:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        output_dir = os.path.join(base_dir, os.path.basename(output_dir))
+    os.makedirs(output_dir, exist_ok=True)
+    
+    print(f"📥 Loading STS-B dataset...")
     raw = load_dataset("gokuls/glue_augmented_stsb")
 
     train_raw = raw["train"].shuffle(seed=seed)
     val_raw = raw.get("validation")
 
     ds = DatasetDict()
-
     used_indices = set()
 
+    print(f"  Splitting data...")
+    
     if val_raw is not None:
         base_val = val_raw.select(range(min(max_val, len(val_raw))))
     else:
@@ -67,20 +77,29 @@ def build_stsb_dataset(output_dir="data_stsb", max_train=10000, max_val=2000, ma
     ds["test"], used_indices = _select_from_train(train_raw, used_indices, max_test)
     ds["train"], used_indices = _select_from_train(train_raw, used_indices, max_train)
 
+    print(f"  Converting to instruction format...")
     for split in ds:
         ds[split] = ds[split].map(map_example, remove_columns=ds[split].column_names)
 
-    os.makedirs(output_dir, exist_ok=True)
     ds.save_to_disk(output_dir)
-    print(f"Saved STS-B dataset to {output_dir}")
+    
+    print(f"\n✅ Saved STS-B dataset to {output_dir}")
+    print(f"📊 Statistics:")
     for split in ds:
-        print(f"  {split}: {len(ds[split]):,}")
+        print(f"  {split}: {len(ds[split]):,} samples")
+    
+    # Kiểm tra mẫu
+    print(f"\n📝 Sample check:")
+    sample = ds["train"][0]
+    print(f"  Task: {sample['task']}")
+    print(f"  Response: '{sample['response']}'")
+    
     return ds
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", type=str, default="data_stsb")
+    parser.add_argument("--output_dir", type=str, default="data/stsb")
     parser.add_argument("--max_train", type=int, default=10000)
     parser.add_argument("--max_val", type=int, default=2000)
     parser.add_argument("--max_test", type=int, default=3000)

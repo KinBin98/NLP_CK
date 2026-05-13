@@ -4,21 +4,26 @@ from datasets import DatasetDict, concatenate_datasets, load_dataset
 
 
 LABEL_MAP = {
-    0: "entailment",
-    1: "neutral",
-    2: "contradiction",
+    0: "0",  # entailment
+    1: "1",  # neutral
+    2: "2",  # contradiction
 }
 
 
 def make_prompt(example):
-    return "\n".join(
-        [
-            "Task: MNLI",
-            f"Premise: {example.get('premise', '')}",
-            f"Hypothesis: {example.get('hypothesis', '')}",
-            "Answer:",
-        ]
-    )
+    return f"""Task: MNLI (Natural Language Inference)
+
+Determine if the hypothesis follows from the premise.
+
+Classification:
+- 0 = Entailment (hypothesis is true given premise)
+- 1 = Neutral (hypothesis may be true or false)
+- 2 = Contradiction (hypothesis is false given premise)
+
+Premise: {example.get('premise', '')}
+Hypothesis: {example.get('hypothesis', '')}
+
+Answer (0, 1, or 2):"""
 
 
 def map_example(example):
@@ -81,7 +86,7 @@ def build_mnli_dataset(output_dir="data_mnli", max_train=10000, max_val=2000, ma
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", type=str, default="data_mnli")
+    parser.add_argument("--output_dir", type=str, default="data/mnli")
     parser.add_argument("--max_train", type=int, default=10000)
     parser.add_argument("--max_val", type=int, default=2000)
     parser.add_argument("--max_test", type=int, default=3000)
