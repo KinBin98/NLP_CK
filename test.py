@@ -43,39 +43,41 @@ def load_checkpoint_model(checkpoint_path, model_name):
     return model, tokenizer
 
 
-def format_prompt_qwen3(raw_prompt, tokenizer):
-    """Format prompt theo đúng chat template của Qwen3"""
-    messages = [{"role": "user", "content": raw_prompt}]
-    formatted = tokenizer.apply_chat_template(
-        messages, 
-        tokenize=False, 
-        add_generation_prompt=True
-    )
-    return formatted
+def predict_batch(model, tokenizer, prompts, max_new_tokens=20):
+    """Predict với format đúng Qwen3 chat template và xử lý output"""
+    formatted_prompts = []
+    for p in prompts:
+        messages = [{"role": "user", "content": p}]
+        formatted = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+        formatted_prompts.append(formatted)
 
-
-def predict_batch(model, tokenizer, prompts, max_new_tokens=50):
-    # Format prompts sang Qwen3 chat template
-    formatted_prompts = [format_prompt_qwen3(p, tokenizer) for p in prompts]
-    
     inputs = tokenizer(formatted_prompts, return_tensors="pt", padding=True, truncation=True).to(model.device)
     outputs = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
     decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
-    
-    return decoded
+
+    # Làm sạch output: chỉ lấy phần trả lời của assistant
+    cleaned_outputs = []
+    for text in decoded:
+        if "assistant\n" in text:
+            text = text.split("assistant\n", 1)[1]
+        cleaned_outputs.append(text.strip())
+    return cleaned_outputs
 
 
 def extract_answer(generated, prompt):
+    """Trích xuất câu trả lời từ output của model"""
     if not generated or len(generated.strip()) == 0:
         return ""
-    
+
     # Lấy dòng đầu tiên không rỗng
     lines = generated.strip().splitlines()
     answer = lines[0].strip() if lines else ""
-    
-    # Bỏ các token đặc biệt nếu có
+    # Bỏ token đặc biệt nếu có
     answer = answer.replace("<|im_end|>", "").replace("</s>", "").strip()
-    
     return answer
 
 
@@ -132,11 +134,11 @@ def _get_task_split(dataset, task_name, split_name):
     return split.filter(lambda ex: ex["task"] == task_name)
 
 
-def run_task(task, dataset, method, model, tokenizer, split_name, include_prompt=False):
+def run_task(task, dataset, method, model, tokenizer, split_name):
     split = _get_task_split(dataset, task.name, split_name)
     if split is None:
         print(f"Warning: {task.full_name} has no '{split_name}' split. Skipping.")
-        return [], [], [], []
+        return [], [], []
 
     prompts = split["prompt"]
     y_true_text = split["response"]
@@ -146,7 +148,7 @@ def run_task(task, dataset, method, model, tokenizer, split_name, include_prompt
         y_pred = []
         batch_size = 4
         for i in range(0, len(prompts), batch_size):
-            batch_prompts = prompts[i : i + batch_size]
+            batch_prompts = prompts[i:i + batch_size]
             decoded = predict_batch(model, tokenizer, batch_prompts)
             for prompt, gen in zip(batch_prompts, decoded):
                 ans = extract_answer(gen, prompt)
@@ -164,7 +166,7 @@ def run_task(task, dataset, method, model, tokenizer, split_name, include_prompt
         y_pred = []
         batch_size = 4
         for i in range(0, len(prompts), batch_size):
-            batch_prompts = prompts[i : i + batch_size]
+            batch_prompts = prompts[i:i + batch_size]
             decoded = predict_batch(model, tokenizer, batch_prompts)
             for prompt, gen in zip(batch_prompts, decoded):
                 ans = extract_answer(gen, prompt)
@@ -191,17 +193,17 @@ def main(args):
 
     model = None
     tokenizer = None
-    
+
     if args.method == "baseline":
         print(f"\n🚀 Loading PRETRAINED model: {args.model_name}")
         model, tokenizer = load_model(args.model_name, load_in_4bit=True)
-        
+
     elif args.method == "checkpoint":
         if not args.checkpoint:
             raise ValueError("--checkpoint is required when method=checkpoint")
         print(f"\n🚀 Loading CHECKPOINT model from: {args.checkpoint}")
         model, tokenizer = load_checkpoint_model(args.checkpoint, args.model_name)
-    
+
     else:
         raise ValueError(f"Unknown method: {args.method}")
 
@@ -232,34 +234,26 @@ def main(args):
                 except ValueError:
                     label = label_text
 
-            row = {
+            rows.append({
                 "task": task.name,
                 "split": args.split,
                 "label": _label_to_str(label),
                 "prediction": _prediction_to_str(pred),
                 "method": args.method,
-            }
-            
-            # Chỉ thêm cột prompt nếu được yêu cầu
-            if args.include_prompt:
-                row["prompt"] = prompt
-                
-            rows.append(row)
+                "prompt": prompt,  # Luôn lưu prompt
+            })
 
-    # Xác định fieldnames dựa trên việc có include_prompt hay không
-    if args.include_prompt:
-        fieldnames = ["task", "split", "label", "prediction", "method", "prompt"]
-    else:
-        fieldnames = ["task", "split", "label", "prediction", "method"]
-    
+    # Luôn ghi đủ 6 cột
+    fieldnames = ["task", "split", "label", "prediction", "method", "prompt"]
+
     with open(args.output_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
     print(f"\n✅ Saved predictions to {args.output_file}")
-    
-    # In thử 5 dòng đầu để kiểm tra
+
+    # Preview 5 dòng đầu
     print("\n📋 Preview first 5 rows:")
     for i, row in enumerate(rows[:5]):
         print(f"  {i+1}. {row}")
@@ -276,8 +270,6 @@ if __name__ == "__main__":
     parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL,
                         help="Base model name for pretrained LLM")
     parser.add_argument("--dataset_dir", type=str, default="data_processed")
-    parser.add_argument("--include_prompt", action="store_true", 
-                        help="Include prompt column in output CSV")
     parser.add_argument("--output_file", type=str, default=os.path.join("outputs", "predictions", "predictions.csv"))
     args = parser.parse_args()
 
