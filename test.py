@@ -132,11 +132,11 @@ def _get_task_split(dataset, task_name, split_name):
     return split.filter(lambda ex: ex["task"] == task_name)
 
 
-def run_task(task, dataset, method, model, tokenizer, split_name):
+def run_task(task, dataset, method, model, tokenizer, split_name, include_prompt=False):
     split = _get_task_split(dataset, task.name, split_name)
     if split is None:
         print(f"Warning: {task.full_name} has no '{split_name}' split. Skipping.")
-        return [], [], []
+        return [], [], [], []
 
     prompts = split["prompt"]
     y_true_text = split["response"]
@@ -144,7 +144,7 @@ def run_task(task, dataset, method, model, tokenizer, split_name):
     if method == "baseline":
         print(f"  📌 Baseline: using pretrained LLM (no fine-tuning) for {task.name}")
         y_pred = []
-        batch_size = 4  # Giảm batch size để tránh OOM
+        batch_size = 4
         for i in range(0, len(prompts), batch_size):
             batch_prompts = prompts[i : i + batch_size]
             decoded = predict_batch(model, tokenizer, batch_prompts)
@@ -232,26 +232,37 @@ def main(args):
                 except ValueError:
                     label = label_text
 
-            rows.append(
-                {
-                    "task": task.name,
-                    "split": args.split,
-                    "label": _label_to_str(label),
-                    "prediction": _prediction_to_str(pred),
-                    "method": args.method,
-                    "prompt": prompt if args.include_prompt else "",
-                }
-            )
+            row = {
+                "task": task.name,
+                "split": args.split,
+                "label": _label_to_str(label),
+                "prediction": _prediction_to_str(pred),
+                "method": args.method,
+            }
+            
+            # Chỉ thêm cột prompt nếu được yêu cầu
+            if args.include_prompt:
+                row["prompt"] = prompt
+                
+            rows.append(row)
 
+    # Xác định fieldnames dựa trên việc có include_prompt hay không
+    if args.include_prompt:
+        fieldnames = ["task", "split", "label", "prediction", "method", "prompt"]
+    else:
+        fieldnames = ["task", "split", "label", "prediction", "method"]
+    
     with open(args.output_file, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=["task", "split", "label", "prediction", "method", "prompt"],
-        )
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
     print(f"\n✅ Saved predictions to {args.output_file}")
+    
+    # In thử 5 dòng đầu để kiểm tra
+    print("\n📋 Preview first 5 rows:")
+    for i, row in enumerate(rows[:5]):
+        print(f"  {i+1}. {row}")
 
 
 if __name__ == "__main__":
