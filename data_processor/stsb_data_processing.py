@@ -7,19 +7,20 @@ def make_prompt(example):
     return f"""Task: STS-B (Semantic Textual Similarity)
 
 Rate the similarity between two sentences on a scale from 0 to 5.
+Output a decimal number rounded to 1 decimal place (e.g., 0.0, 1.5, 2.3, 4.8, 5.0).
 
 Scale:
-- 0: Completely different meaning
-- 1: Mostly different
-- 2: Slightly similar
-- 3: Moderately similar
-- 4: Very similar
-- 5: Completely equivalent meaning
+- 0.0: Completely different meaning
+- 1.0: Mostly different
+- 2.0: Slightly similar
+- 3.0: Moderately similar
+- 4.0: Very similar
+- 5.0: Completely equivalent meaning
 
 Sentence 1: {example.get('sentence1', '')}
 Sentence 2: {example.get('sentence2', '')}
 
-Similarity score (0-5):"""
+Similarity score (0.0 to 5.0, one decimal):"""
 
 
 def map_example(example):
