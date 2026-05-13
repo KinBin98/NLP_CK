@@ -47,8 +47,9 @@ def load_model(model_name):
     return model, tokenizer
 
 
-def format_examples(examples):
-    return {"text": [f"{p} {r}" for p, r in zip(examples["prompt"], examples["response"])]}
+def format_examples(examples, eos_token=""):
+    eos_suffix = eos_token or ""
+    return {"text": [f"{p} {r}{eos_suffix}" for p, r in zip(examples["prompt"], examples["response"])]}
 
 
 def main(args):
@@ -76,14 +77,24 @@ def main(args):
         else:
             eval_ds = dataset["validation"]
 
-    # Format dữ liệu
-    train_ds = train_ds.map(format_examples, batched=True, remove_columns=train_ds.column_names)
-    if eval_ds is not None:
-        eval_ds = eval_ds.map(format_examples, batched=True, remove_columns=eval_ds.column_names)
-    
     # Load model
     model, tokenizer = load_model(args.model_name)
     bf16 = torch.cuda.is_bf16_supported()
+
+    eos_token = tokenizer.eos_token or ""
+
+    # Format dữ liệu
+    train_ds = train_ds.map(
+        lambda ex: format_examples(ex, eos_token),
+        batched=True,
+        remove_columns=train_ds.column_names,
+    )
+    if eval_ds is not None:
+        eval_ds = eval_ds.map(
+            lambda ex: format_examples(ex, eos_token),
+            batched=True,
+            remove_columns=eval_ds.column_names,
+        )
 
     # Training arguments
     eval_strategy = "steps" if eval_ds is not None else "no"

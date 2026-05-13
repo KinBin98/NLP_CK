@@ -46,7 +46,9 @@ python train.py --dataset_dir data_processed --task sst2 --output_dir outputs/ch
 
 ```bash
 # Baseline
-python test.py --method baseline --split test --dataset_dir data_processed --output_file outputs/predictions/baseline.csv
+python predict.py --method baseline --task ag_news --split test \
+    --model_name unsloth/llama-3-8b-bnb-4bit \
+    --output_file outputs/baseline_llm.csv
 
 # Multi-task checkpoint
 python test.py --method checkpoint --checkpoint outputs/checkpoints/checkpoint_multi.pt --split test --dataset_dir data_processed --output_file outputs/predictions/multitask.csv

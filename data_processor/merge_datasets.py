@@ -4,8 +4,11 @@ SHUFFLE/TRỘN dữ liệu giữa các task để tránh học theo thứ tự t
 """
 
 import os
+import sys
 from pathlib import Path
 from datasets import DatasetDict, load_from_disk, concatenate_datasets
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from config import TASKS
 
 # Mapping task name to folder name
