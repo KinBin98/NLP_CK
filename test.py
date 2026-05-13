@@ -38,20 +38,36 @@ def load_checkpoint_model(checkpoint_path, model_name):
     return model, tokenizer
 
 
-def predict_batch(model, tokenizer, prompts, max_new_tokens=20):
+def predict_batch(model, tokenizer, prompts, max_new_tokens=50):  # Tăng lên 50
     inputs = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(model.device)
     outputs = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
     decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+    
+    # Xử lý output rỗng
+    for i, d in enumerate(decoded):
+        if not d or len(d.strip()) == 0:
+            print(f"  ⚠️ Empty output for sample {i+1}, using fallback")
+            decoded[i] = prompts[i] + " unknown"
+    
     return decoded
 
 
 def extract_answer(generated, prompt):
+    if not generated or len(generated.strip()) == 0:
+        return ""
+    
     if generated.startswith(prompt):
         generated = generated[len(prompt):]
+    
     if "Answer:" in generated:
         generated = generated.split("Answer:")[-1]
-    answer = generated.strip().splitlines()[0]
-    return answer.strip()
+    
+    lines = generated.strip().splitlines()
+    if len(lines) == 0:
+        return ""
+    
+    answer = lines[0].strip()
+    return answer
 
 
 def normalize_label(text):
