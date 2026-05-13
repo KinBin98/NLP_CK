@@ -43,38 +43,47 @@ def load_checkpoint_model(checkpoint_path, model_name):
     return model, tokenizer
 
 
-def predict_batch(model, tokenizer, prompts, max_new_tokens=50):
-    """Predict với format đúng Qwen3 chat template"""
+def predict_batch(model, tokenizer, prompts, max_new_tokens=20):
+    """Predict đúng format Qwen3 từ notebook"""
     formatted_prompts = []
     for p in prompts:
+        # Format đúng như trong notebook
         messages = [{"role": "user", "content": p}]
         formatted = tokenizer.apply_chat_template(
             messages,
             tokenize=False,
-            add_generation_prompt=True  # Quan trọng: thêm <|im_start|>assistant\n
+            add_generation_prompt=True  # BẮT BUỘC
         )
         formatted_prompts.append(formatted)
     
-    inputs = tokenizer(formatted_prompts, return_tensors="pt", padding=True, truncation=True).to(model.device)
+    # Tokenize với padding_side='left'
+    inputs = tokenizer(
+        formatted_prompts,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=1024
+    ).to(model.device)
     
-    # Generation parameters theo khuyến nghị từ Qwen3 team
+    # Generation params theo notebook
     outputs = model.generate(
-        **inputs, 
+        **inputs,
         max_new_tokens=max_new_tokens,
-        temperature=0.7,  
-        top_p=0.8,      
-        top_k=20,   
-        do_sample=True, 
+        temperature=0.7,    # Theo khuyến nghị
+        top_p=0.8,
+        top_k=20,
+        do_sample=True,     # Bật sampling
         pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id
     )
     
-    decoded = tokenizer.batch_decode(outputs, skip_special_tokens=False)  # Không skip special tokens
+    # Decode với skip_special_tokens=False để giữ cấu trúc
+    decoded = tokenizer.batch_decode(outputs, skip_special_tokens=False)
     
-    # Lấy phần response của assistant
+    # Extract response từ sau <|im_start|>assistant
     cleaned_outputs = []
     for text in decoded:
-        # Tìm phần bắt đầu của assistant response
         if "<|im_start|>assistant\n" in text:
+            # Lấy phần sau assistant
             response = text.split("<|im_start|>assistant\n", 1)[1]
             # Cắt tại <|im_end|> nếu có
             if "<|im_end|>" in response:
