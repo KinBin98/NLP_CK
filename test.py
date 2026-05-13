@@ -7,6 +7,7 @@ import torch
 from datasets import load_from_disk
 from transformers import set_seed
 from unsloth import FastLanguageModel
+from unsloth.chat_templates import get_chat_template
 
 from config import DEFAULT_MODEL, SEED, TASKS
 
@@ -19,6 +20,8 @@ def load_model(model_name, load_in_4bit=True):
         dtype=None,
         load_in_4bit=load_in_4bit,
     )
+    # Set chat template cho Qwen3
+    tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
     FastLanguageModel.for_inference(model)
     return model, tokenizer
 
@@ -31,6 +34,8 @@ def load_checkpoint_model(checkpoint_path, model_name):
         dtype=None,
         load_in_4bit=True,
     )
+    # Set chat template cho Qwen3
+    tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
     if checkpoint_path:
         state = torch.load(checkpoint_path, map_location="cpu")
         model.load_state_dict(state, strict=False)
@@ -38,16 +43,24 @@ def load_checkpoint_model(checkpoint_path, model_name):
     return model, tokenizer
 
 
-def predict_batch(model, tokenizer, prompts, max_new_tokens=50):  # Tăng lên 50
-    inputs = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(model.device)
+def format_prompt_qwen3(raw_prompt, tokenizer):
+    """Format prompt theo đúng chat template của Qwen3"""
+    messages = [{"role": "user", "content": raw_prompt}]
+    formatted = tokenizer.apply_chat_template(
+        messages, 
+        tokenize=False, 
+        add_generation_prompt=True
+    )
+    return formatted
+
+
+def predict_batch(model, tokenizer, prompts, max_new_tokens=50):
+    # Format prompts sang Qwen3 chat template
+    formatted_prompts = [format_prompt_qwen3(p, tokenizer) for p in prompts]
+    
+    inputs = tokenizer(formatted_prompts, return_tensors="pt", padding=True, truncation=True).to(model.device)
     outputs = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
     decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
-    
-    # Xử lý output rỗng
-    for i, d in enumerate(decoded):
-        if not d or len(d.strip()) == 0:
-            print(f"  ⚠️ Empty output for sample {i+1}, using fallback")
-            decoded[i] = prompts[i] + " unknown"
     
     return decoded
 
@@ -56,17 +69,13 @@ def extract_answer(generated, prompt):
     if not generated or len(generated.strip()) == 0:
         return ""
     
-    if generated.startswith(prompt):
-        generated = generated[len(prompt):]
-    
-    if "Answer:" in generated:
-        generated = generated.split("Answer:")[-1]
-    
+    # Lấy dòng đầu tiên không rỗng
     lines = generated.strip().splitlines()
-    if len(lines) == 0:
-        return ""
+    answer = lines[0].strip() if lines else ""
     
-    answer = lines[0].strip()
+    # Bỏ các token đặc biệt nếu có
+    answer = answer.replace("<|im_end|>", "").replace("</s>", "").strip()
+    
     return answer
 
 
@@ -129,16 +138,13 @@ def run_task(task, dataset, method, model, tokenizer, split_name):
         print(f"Warning: {task.full_name} has no '{split_name}' split. Skipping.")
         return [], [], []
 
-    
-
     prompts = split["prompt"]
     y_true_text = split["response"]
 
-    # BASELINE = DÙNG LLM PRETRAIN (chưa fine-tune)
     if method == "baseline":
         print(f"  📌 Baseline: using pretrained LLM (no fine-tuning) for {task.name}")
         y_pred = []
-        batch_size = 8
+        batch_size = 4  # Giảm batch size để tránh OOM
         for i in range(0, len(prompts), batch_size):
             batch_prompts = prompts[i : i + batch_size]
             decoded = predict_batch(model, tokenizer, batch_prompts)
@@ -153,11 +159,10 @@ def run_task(task, dataset, method, model, tokenizer, split_name):
                     y_pred.append(_extract_first_float(ans))
         return y_true_text, y_pred, prompts
 
-    # CHECKPOINT = DÙNG LLM ĐÃ FINE-TUNE
     elif method == "checkpoint":
         print(f"  📌 Checkpoint: using fine-tuned LLM for {task.name}")
         y_pred = []
-        batch_size = 8
+        batch_size = 4
         for i in range(0, len(prompts), batch_size):
             batch_prompts = prompts[i : i + batch_size]
             decoded = predict_batch(model, tokenizer, batch_prompts)
@@ -188,12 +193,10 @@ def main(args):
     tokenizer = None
     
     if args.method == "baseline":
-        # Baseline: load model pretrain (chưa fine-tune)
         print(f"\n🚀 Loading PRETRAINED model: {args.model_name}")
         model, tokenizer = load_model(args.model_name, load_in_4bit=True)
         
     elif args.method == "checkpoint":
-        # Checkpoint: load model đã fine-tune
         if not args.checkpoint:
             raise ValueError("--checkpoint is required when method=checkpoint")
         print(f"\n🚀 Loading CHECKPOINT model from: {args.checkpoint}")
