@@ -140,16 +140,24 @@ def run_task(task, dataset, method, model, tokenizer, split_name):
     batch_size = 4
 
     for i in range(0, len(prompts), batch_size):
-        decoded = predict_batch(model, tokenizer, prompts[i:i+batch_size])
+        # ✅ THÊM task_type vào đây
+        decoded = predict_batch(
+            model, tokenizer, 
+            prompts[i:i+batch_size],
+            task_type=task.task_type  # ← QUAN TRỌNG
+        )
+        
         for gen in decoded:
-            ans = extract_answer(gen, "")
             if task.task_type == "classification":
-                y_pred.append(_label_to_id(task, ans))
+                y_pred.append(_label_to_id(task, gen))
             elif task.task_type == "qa":
-                y_pred.append(ans)
-            else:
-                match = re.search(r"[-+]?\d*\.?\d+", ans)
-                y_pred.append(float(match.group(0)) if match else None)
+                y_pred.append(gen)
+            else:  # regression
+                try:
+                    y_pred.append(float(gen) if gen else None)
+                except:
+                    y_pred.append(None)
+    
     return y_true, y_pred, prompts
 
 
