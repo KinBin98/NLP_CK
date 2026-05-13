@@ -110,7 +110,7 @@ TASKS = [
 # ============================================================
 
 # Option 1: Using unsloth optimized version (recommended for speed)
-DEFAULT_MODEL = "unsloth/qwen3-4b-instruct"
+DEFAULT_MODEL = "unsloth/Qwen3-4B-Instruct-2507-unsloth-bnb-4bit"
 
 # Option 2: Using original Hugging Face model (if unsloth version not available)
 # DEFAULT_MODEL = "Qwen/Qwen3-4B-Instruct"
