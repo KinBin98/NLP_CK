@@ -40,10 +40,9 @@ def load_checkpoint_model(checkpoint_path, model_name):
     return model, tokenizer
 
 
-def predict_batch(model, tokenizer, prompts, max_new_tokens=20):
+def predict_batch(model, tokenizer, prompts, task_type="classification", max_new_tokens=20):
     formatted_prompts = []
     for p in prompts:
-        # Không thêm gì vào prompt, dùng nguyên bản
         messages = [{"role": "user", "content": p.strip()}]
         formatted = tokenizer.apply_chat_template(
             messages, 
@@ -51,6 +50,14 @@ def predict_batch(model, tokenizer, prompts, max_new_tokens=20):
             add_generation_prompt=True
         )
         formatted_prompts.append(formatted)
+    
+    # Điều chỉnh max_new_tokens theo task_type
+    if task_type == "qa":
+        max_new_tokens = 50  # QA cần nhiều token hơn
+    elif task_type == "regression":
+        max_new_tokens = 20
+    else:
+        max_new_tokens = 5
     
     inputs = tokenizer(
         formatted_prompts, 
@@ -63,7 +70,7 @@ def predict_batch(model, tokenizer, prompts, max_new_tokens=20):
     
     outputs = model.generate(
         **inputs,
-        max_new_tokens=5,  # Chỉ cần 1-2 token
+        max_new_tokens=max_new_tokens,
         temperature=0.1,
         do_sample=False,
         pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id
@@ -71,21 +78,24 @@ def predict_batch(model, tokenizer, prompts, max_new_tokens=20):
     
     decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
     
-    # Extract số 0-3 từ response
     cleaned = []
     for d in decoded:
-        # Tìm phần sau "assistant" nếu có
         if "assistant" in d.lower():
             d = d.lower().split("assistant")[-1].strip()
         
-        # Tìm số 0-3
-        match = re.search(r'\b[0-3]\b', d)
-        if match:
-            cleaned.append(match.group(0))
-        else:
-            # Fallback: tìm bất kỳ số nào
-            match = re.search(r'\b\d+\b', d)
+        if task_type == "classification":
+            # Tìm số phù hợp với số class
+            match = re.search(r'\b[0-3]\b', d)
             cleaned.append(match.group(0) if match else "")
+        
+        elif task_type == "regression":
+            # Tìm float
+            match = re.search(r'\b\d+(?:\.\d+)?\b', d)
+            cleaned.append(match.group(0) if match else "")
+        
+        elif task_type == "qa":
+            # Trả về toàn bộ câu trả lời
+            cleaned.append(d if d else "")
     
     return cleaned
 
