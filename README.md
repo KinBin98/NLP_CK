@@ -1,82 +1,114 @@
-# Multi-task Fine-tuning of LLMs on GLUE
+# Multi-task Fine-tuning of LLMs on GLUE & Extended Datasets
 
-This project provides a minimal, reproducible codebase to compare:
-- Multi-task fine-tuning (single model across tasks)
-- Single-task fine-tuning (one model per task)
-- Baseline (majority/mean)
+This project fine-tunes and evaluates an LLM on multiple NLP tasks with a unified data format.
 
-## Setup
+## Tasks Included
+- SST-2 (sentiment)
+- MNLI (natural language inference)
+- CoLA (grammar acceptability)
+- STS-B (semantic similarity regression)
+- SQuAD (question answering)
+- AG News (topic classification)
+
+## Kaggle Quickstart
+
+1) Enable GPU in Kaggle settings.
+2) Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 1) Build dataset
+3) Build datasets and merge:
 
 ```bash
-python data_processing.py --output_dir data_processed
+python data_processor/sst2_data_processing.py --output_dir data_sst2_v2
+python data_processor/mnli_data_processing.py --output_dir data_mnli
+python data_processor/cola_data_processing.py --output_dir data_cola
+python data_processor/stsb_data_processing.py --output_dir data_stsb
+python data_processor/squad_data_processing.py --output_dir data_squad
+python data_processor/ag_news_data_processing.py --output_dir data_ag_news
+
+python data_processor/merge_datasets.py --output_dir data_processed
 ```
 
-Optional: limit samples per task for quick runs.
+4) Train (multi-task or single-task). Training uses the train split and evaluates on validation during training.
 
 ```bash
-python data_processing.py --output_dir data_processed --max_train 2000 --max_val 2000 --max_test 2000
+# Multi-task
+python train.py --dataset_dir data_processed --output_dir outputs/checkpoints
+
+# Single-task (example: sst2)
+python train.py --dataset_dir data_processed --task sst2 --output_dir outputs/checkpoints
 ```
 
-## 2) Train multitask
+5) Evaluate (baseline or checkpoint). Default split is validation; use --split test for final results.
 
 ```bash
-python train_test/train_multitask.py --dataset_dir data_processed --output_dir outputs/checkpoints/multitask
+# Baseline
+python test.py --method baseline --split test --dataset_dir data_processed --output_file outputs/predictions/baseline.csv
+
+# Multi-task checkpoint
+python test.py --method checkpoint --checkpoint outputs/checkpoints/checkpoint_multi.pt --split test --dataset_dir data_processed --output_file outputs/predictions/multitask.csv
+
+# Single-task checkpoint
+python test.py --method checkpoint --checkpoint outputs/checkpoints/sst2_checkpoint_sst2.pt --task sst2 --split test --dataset_dir data_processed --output_file outputs/predictions/single_sst2.csv
 ```
 
-## 3) Train single-task (example: sst2)
+6) Score results:
 
 ```bash
-python train_test/train_single.py --dataset_dir data_processed --task sst2 --output_dir outputs/checkpoints/single_sst2
+python evaluation/evaluate.py --predictions_file outputs/predictions/baseline.csv
+python evaluation/evaluate.py --predictions_file outputs/predictions/multitask.csv
+python evaluation/evaluate.py --predictions_file outputs/predictions/single_sst2.csv
 ```
 
-Repeat for other tasks if needed.
+## Data Processing Details
 
-## 4) Predict (test)
+Each task is split into train/validation/test with non-overlapping samples:
+- Train: 10,000 samples
+- Validation: 2,000 samples (top-up from train if needed)
+- Test: 3,000 samples (from train set, non-overlapping)
 
-Baseline:
+Merged dataset (data_processed):
+- Train: 60,000 samples
+- Validation: 12,000 samples
+- Test: 18,000 samples
 
-```bash
-python train_test/predict.py --method baseline --split test --dataset_dir data_processed --output_file outputs/predictions/baseline.csv
+## Project Structure
+
+```
+.
+├── config.py                  # Task configs (TASKS list)
+├── data_processor/            # Task data processors
+│   ├── sst2_data_processing.py
+│   ├── mnli_data_processing.py
+│   ├── cola_data_processing.py
+│   ├── stsb_data_processing.py
+│   ├── squad_data_processing.py
+│   ├── ag_news_data_processing.py
+│   └── merge_datasets.py
+├── train.py                   # Train (multi-task or single-task)
+├── test.py                    # Inference (baseline/checkpoint)
+├── evaluation/
+│   ├── evaluate.py            # Compute metrics
+│   ├── metrics.py             # Metric implementations
+│   └── plot_metrics.py        # Visualization
+├── data/                      # Per-task datasets
+├── data_processed/            # Merged dataset
+├── outputs/                   # Checkpoints, predictions, results, plots
+└── requirements.txt
 ```
 
-Multitask (checkpoint):
+## Key Configuration
 
-```bash
-python train_test/predict.py --method checkpoint --split test --dataset_dir data_processed --checkpoint outputs/checkpoints/multitask/best_model.pt --output_file outputs/predictions/multitask.csv
-```
+Edit config.py to customize:
+- TASKS (dataset, fields, labels, metric)
+- MAX_STEPS, MAX_SEQ_LENGTH, PER_DEVICE_BATCH_SIZE, LEARNING_RATE, WARMUP_STEPS
 
-Single-task (example: sst2):
+## Notes
 
-```bash
-python train_test/predict.py --method checkpoint --task sst2 --split test --dataset_dir data_processed --checkpoint outputs/checkpoints/single_sst2/best_model.pt --output_file outputs/predictions/single_sst2.csv
-```
+- Model: Unsloth Llama 3 8B (4-bit)
+- Fine-tuning: LoRA with SFTTrainer
+- Validation is used during training when available
 
-## 5) Evaluate
-
-```bash
-python evaluation/evaluate.py --predictions_file outputs/predictions/baseline.csv --method baseline --split test
-python evaluation/evaluate.py --predictions_file outputs/predictions/multitask.csv --method multitask --split test
-python evaluation/evaluate.py --predictions_file outputs/predictions/single_sst2.csv --method single --task sst2 --split test
-```
-
-Results are appended to `outputs/results/results.csv`.
-
-## 6) Plot metrics
-
-```bash
-python evaluation/plot_metrics.py --metrics accuracy f1_macro
-```
-
-Plots are saved to `outputs/plots/`.
-
-## Kaggle notes
-
-- Use a GPU runtime (T4/A100)
-- Keep `MAX_STEPS` small for quick experiments
-- Consider `--max_samples` for fast iteration

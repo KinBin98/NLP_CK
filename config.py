@@ -52,7 +52,7 @@ TASKS = [
     TaskConfig(
         name="cola",
         full_name="CoLA",
-        dataset="glue",
+        dataset="gokuls/glue_augmented_cola",
         text_fields=["sentence"],
         label_field="label",
         label_map={

@@ -1,0 +1,66 @@
+{
+  "builder_name": "parquet",
+  "citation": "",
+  "config_name": "default",
+  "dataset_name": "glue_augmented_stsb",
+  "dataset_size": 45244112,
+  "description": "",
+  "download_checksums": {
+    "hf://datasets/gokuls/glue_augmented_stsb@cc8e91e79b0217bf97de2091a16d1851a3adba32/data/train-00000-of-00001-1c832d00e7f60b65.parquet": {
+      "num_bytes": 9635695,
+      "checksum": null
+    },
+    "hf://datasets/gokuls/glue_augmented_stsb@cc8e91e79b0217bf97de2091a16d1851a3adba32/data/validation-00000-of-00001-0cdf0210e5a58497.parquet": {
+      "num_bytes": 148798,
+      "checksum": null
+    },
+    "hf://datasets/gokuls/glue_augmented_stsb@cc8e91e79b0217bf97de2091a16d1851a3adba32/data/test-00000-of-00001-4ced30aeb81fb878.parquet": {
+      "num_bytes": 112055,
+      "checksum": null
+    }
+  },
+  "download_size": 9896548,
+  "features": {
+    "prompt": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "response": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "task": {
+      "dtype": "string",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 55140660,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 44857352,
+      "num_examples": 322247,
+      "dataset_name": "glue_augmented_stsb"
+    },
+    "validation": {
+      "name": "validation",
+      "num_bytes": 216440,
+      "num_examples": 1500,
+      "dataset_name": "glue_augmented_stsb"
+    },
+    "test": {
+      "name": "test",
+      "num_bytes": 170320,
+      "num_examples": 1379,
+      "dataset_name": "glue_augmented_stsb"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}
