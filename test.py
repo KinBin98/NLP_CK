@@ -41,18 +41,53 @@ def load_checkpoint_model(checkpoint_path, model_name):
 
 
 def predict_batch(model, tokenizer, prompts, max_new_tokens=20):
-    messages_list = [[{"role": "user", "content": p}] for p in prompts]
-    formatted = [tokenizer.apply_chat_template(m, tokenize=False, add_generation_prompt=True) for m in messages_list]
+    formatted_prompts = []
+    for p in prompts:
+        # Không thêm gì vào prompt, dùng nguyên bản
+        messages = [{"role": "user", "content": p.strip()}]
+        formatted = tokenizer.apply_chat_template(
+            messages, 
+            tokenize=False, 
+            add_generation_prompt=True
+        )
+        formatted_prompts.append(formatted)
     
-    inputs = tokenizer(formatted, return_tensors="pt", padding=True, truncation=True, max_length=1024).to(model.device)
+    inputs = tokenizer(
+        formatted_prompts, 
+        return_tensors="pt", 
+        padding=True, 
+        truncation=True,
+        max_length=1024,
+        padding_side='left'
+    ).to(model.device)
     
-    outputs = model.generate(**inputs, max_new_tokens=max_new_tokens, temperature=0.1, do_sample=False,
-                            pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id)
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=5,  # Chỉ cần 1-2 token
+        temperature=0.1,
+        do_sample=False,
+        pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id
+    )
     
     decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
     
-    return [re.sub(r'.*?assistant\s*', '', d, flags=re.IGNORECASE).strip().split('\n')[0] for d in decoded]
-
+    # Extract số 0-3 từ response
+    cleaned = []
+    for d in decoded:
+        # Tìm phần sau "assistant" nếu có
+        if "assistant" in d.lower():
+            d = d.lower().split("assistant")[-1].strip()
+        
+        # Tìm số 0-3
+        match = re.search(r'\b[0-3]\b', d)
+        if match:
+            cleaned.append(match.group(0))
+        else:
+            # Fallback: tìm bất kỳ số nào
+            match = re.search(r'\b\d+\b', d)
+            cleaned.append(match.group(0) if match else "")
+    
+    return cleaned
 
 def extract_answer(generated, _):
     if not generated:
