@@ -105,14 +105,22 @@ TASKS = [
     ),
 ]
 
-# Model and training config
-DEFAULT_MODEL = "unsloth/llama-3-8b-bnb-4bit"
+# ============================================================
+# MODEL CONFIGURATION - SWITCHED TO QWEN3-4B
+# ============================================================
+
+# Option 1: Using unsloth optimized version (recommended for speed)
+DEFAULT_MODEL = "unsloth/qwen3-4b-instruct"
+
+# Option 2: Using original Hugging Face model (if unsloth version not available)
+# DEFAULT_MODEL = "Qwen/Qwen3-4B-Instruct"
+
 MAX_SEQ_LENGTH = 1024
 OUTPUT_DIR = "outputs/checkpoints"
 RESULTS_CSV = "outputs/results/results.csv"
 SEED = 42
 
-# Hyperparameters
+# Hyperparameters (giữ nguyên, Qwen3 chạy tốt với các tham số này)
 LEARNING_RATE = 2e-4
 NUM_TRAIN_EPOCHS = 1
 PER_DEVICE_BATCH_SIZE = 2
