@@ -47,7 +47,7 @@ def preprocess_dataset(examples, tokenizer):
         texts.append(text)
     
     # Tokenize
-    tokenized = tokenizer(texts, truncation=True, max_length=MAX_SEQ_LENGTH)
+    tokenized = tokenizer(texts, truncation=True, padding=True, max_length=MAX_SEQ_LENGTH)
     tokenized["labels"] = tokenized["input_ids"].copy()
     return tokenized
 
