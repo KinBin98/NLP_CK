@@ -198,7 +198,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--method", type=str, choices=["checkpoint", "baseline"], required=True)
     parser.add_argument("--task", type=str, default=None)
-    parser.add_argument("--split", type=str, default="validation")
+    parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL)
     parser.add_argument("--dataset_dir", type=str, default="data/merged")

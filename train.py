@@ -97,7 +97,7 @@ def main(args):
         logging_steps=args.logging_steps,
         save_steps=args.save_steps,
         save_total_limit=2,
-        evaluation_strategy="steps" if eval_ds else "no",
+        eval_strategy="steps" if eval_ds else "no",
         eval_steps=args.eval_steps,
         gradient_checkpointing=True,
         load_best_model_at_end=bool(eval_ds),
