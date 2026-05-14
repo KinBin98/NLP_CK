@@ -1,10 +1,12 @@
-import argparse
-import os
-import torch
-from datasets import load_from_disk
-from transformers import TrainingArguments, set_seed, EarlyStoppingCallback, Trainer, DataCollatorForLanguageModeling
+import unsloth  # Dòng đầu tiên
 from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
+
+# Sau đó mới import các thư viện khác
+import torch
+from datasets import load_from_disk
+from transformers import TrainingArguments, set_seed, EarlyStoppingCallback
+from trl import SFTTrainer  # Dùng SFTTrainer thay vì Trainer
 
 from config import (
     DEFAULT_MODEL, GRADIENT_ACCUMULATION_STEPS, LEARNING_RATE,
@@ -35,8 +37,8 @@ def load_model(model_name):
     return model, tokenizer
 
 
-def preprocess_dataset(examples, tokenizer):
-    """Format chat template và tokenize"""
+def format_examples(examples, tokenizer):
+    """Format chat template, không tokenize"""
     texts = []
     for p, r in zip(examples["prompt"], examples["response"]):
         messages = [
@@ -45,11 +47,7 @@ def preprocess_dataset(examples, tokenizer):
         ]
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         texts.append(text)
-    
-    # Tokenize
-    tokenized = tokenizer(texts, truncation=True, padding=True, max_length=MAX_SEQ_LENGTH)
-    tokenized["labels"] = tokenized["input_ids"].copy()
-    return tokenized
+    return {"text": texts}
 
 
 def main(args):
@@ -83,15 +81,15 @@ def main(args):
     print(f"\nLoading model: {args.model_name}")
     model, tokenizer = load_model(args.model_name)
 
-    print("Preprocessing datasets (format + tokenize)...")
+    print("Formatting datasets...")
     train_ds = train_ds.map(
-        lambda x: preprocess_dataset(x, tokenizer), 
+        lambda x: format_examples(x, tokenizer), 
         batched=True, 
         remove_columns=train_ds.column_names
     )
     if eval_ds:
         eval_ds = eval_ds.map(
-            lambda x: preprocess_dataset(x, tokenizer), 
+            lambda x: format_examples(x, tokenizer), 
             batched=True, 
             remove_columns=eval_ds.column_names
         )
@@ -117,19 +115,17 @@ def main(args):
         greater_is_better=False,
         optim="adamw_8bit",
         report_to="none",
-        remove_unused_columns=False,
-        group_by_length=False,  # Thêm để tránh lỗi
     )
     
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-    
-    trainer = Trainer(
+    # Dùng SFTTrainer thay vì Trainer
+    trainer = SFTTrainer(
         model=model,
-        args=training_args,
+        tokenizer=tokenizer,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
+        dataset_text_field="text",
+        max_seq_length=MAX_SEQ_LENGTH,
+        args=training_args,
     )
 
     if eval_ds and args.early_stopping_patience > 0:
