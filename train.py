@@ -5,15 +5,15 @@ import torch
 from datasets import load_from_disk
 from transformers import (
     AutoModelForCausalLM, AutoTokenizer,
-    TrainingArguments, set_seed, EarlyStoppingCallback, Trainer
+    TrainingArguments, set_seed, EarlyStoppingCallback, Trainer,
+    BitsAndBytesConfig
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from transformers import BitsAndBytesConfig
 
 from config import (
     DEFAULT_MODEL, GRADIENT_ACCUMULATION_STEPS, LEARNING_RATE,
     MAX_SEQ_LENGTH, OUTPUT_DIR, PER_DEVICE_BATCH_SIZE,
-    SEED, WARMUP_RATIO
+    SEED, WARMUP_STEPS  # Đổi WARMUP_RATIO thành WARMUP_STEPS
 )
 
 
@@ -135,7 +135,7 @@ def main(args):
         output_dir=os.path.join(args.output_dir, mode),
         per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-        warmup_ratio=WARMUP_RATIO,
+        warmup_steps=WARMUP_STEPS,  # Sửa: warmup_ratio -> warmup_steps
         max_steps=args.max_steps,
         learning_rate=args.learning_rate,
         fp16=not bf16,
@@ -154,13 +154,12 @@ def main(args):
         remove_unused_columns=False,
     )
     
-    # Trainer
+    # Trainer (bỏ tokenizer)
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
-        tokenizer=tokenizer,
     )
 
     if eval_ds and args.early_stopping_patience > 0:
