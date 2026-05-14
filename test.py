@@ -3,6 +3,7 @@ import csv
 import os
 import re
 import torch
+from collections import defaultdict
 from datasets import load_from_disk
 from transformers import set_seed
 from unsloth import FastLanguageModel
@@ -51,16 +52,15 @@ def predict_batch(model, tokenizer, prompts, task_type="classification", max_new
         )
         formatted_prompts.append(formatted)
     
-    # Điều chỉnh max_new_tokens và temperature theo task_type
     if task_type == "qa":
         max_new_tokens = 50
         temperature = 0.5
         do_sample = True
     elif task_type == "regression":
         max_new_tokens = 20
-        temperature = 0.7
-        do_sample = True
-    else:  # classification
+        temperature = 0.1
+        do_sample = False
+    else:
         max_new_tokens = 5
         temperature = 0.1
         do_sample = False
@@ -91,27 +91,15 @@ def predict_batch(model, tokenizer, prompts, task_type="classification", max_new
             d = d.lower().split("assistant")[-1].strip()
         
         if task_type == "classification":
-            # Tìm số phù hợp với số class
             match = re.search(r'\b[0-3]\b', d)
             cleaned.append(match.group(0) if match else "")
-        
         elif task_type == "regression":
-            # Tìm float
             match = re.search(r'\b\d+(?:\.\d+)?\b', d)
             cleaned.append(match.group(0) if match else "")
-        
         elif task_type == "qa":
-            # Trả về toàn bộ câu trả lời
             cleaned.append(d if d else "")
     
     return cleaned
-
-
-def extract_answer(generated, _):
-    if not generated:
-        return ""
-    match = re.search(r'\b\d+(?:\.\d+)?\b', generated)
-    return match.group(0) if match else generated.split()[0] if generated else ""
 
 
 def normalize_label(text):
@@ -130,47 +118,6 @@ def _label_to_id(task, label_text):
         return reverse_map.get(normalize_label(str(label_text)), None)
 
 
-def _get_task_split(dataset, task_name, split_name):
-    if split_name not in dataset:
-        return None
-    return dataset[split_name].filter(lambda ex: ex["task"] == task_name)
-
-
-def run_task(task, dataset, method, model, tokenizer, split_name):
-    split = _get_task_split(dataset, task.name, split_name)
-    if split is None:
-        return [], [], []
-
-    prompts = split["prompt"]
-    y_true = split["response"]
-    y_pred = []
-    batch_size = 4
-
-    for i in range(0, len(prompts), batch_size):
-        decoded = predict_batch(
-            model, tokenizer, 
-            prompts[i:i+batch_size],
-            task_type=task.task_type
-        )
-        
-        for gen in decoded:
-            if task.task_type == "classification":
-                y_pred.append(_label_to_id(task, gen))
-            elif task.task_type == "qa":
-                y_pred.append(gen)
-            else:  # regression (STS-B)
-                try:
-                    if gen:
-                        value = float(gen)
-                        y_pred.append(round(value, 1))
-                    else:
-                        y_pred.append(None)
-                except:
-                    y_pred.append(None)
-    
-    return y_true, y_pred, prompts
-
-
 def main(args):
     set_seed(SEED)
     os.makedirs(os.path.dirname(args.output_file) or ".", exist_ok=True)
@@ -181,26 +128,105 @@ def main(args):
     print(f"\n🚀 Loading model: {args.model_name}")
     model, tokenizer = load_model(args.model_name, load_in_4bit=True)
 
+    if args.split not in dataset:
+        print(f"⚠️ Split '{args.split}' not found")
+        return
+    
+    full_split = dataset[args.split]
+    task_map = {task.name: task for task in TASKS}
+    
+    print(f"\n📊 Processing {len(full_split)} samples from {args.split} split")
+    
+    # Lọc theo task nếu có
+    if args.task:
+        full_split = full_split.filter(lambda ex: ex["task"] == args.task)
+        print(f"  Filtered to {len(full_split)} samples for task '{args.task}'")
+    
     rows = []
-    for task in TASKS:
-        if args.task and task.name != args.task:
-            continue
-        print(f"\n📊 Processing task: {task.name}")
-        y_true, y_pred, prompts = run_task(task, dataset, args.method, model, tokenizer, args.split)
+    batch_size = 4
+    
+    # Duyệt theo batch, giữ nguyên thứ tự shuffle
+    for i in range(0, len(full_split), batch_size):
+        batch = full_split[i:i+batch_size]
         
-        for prompt, label, pred in zip(prompts, y_true, y_pred):
+        # Chuẩn bị batch
+        batch_indices = []
+        batch_prompts = []
+        batch_tasks = []
+        batch_labels = []
+        batch_task_types = []
+        
+        for idx, example in enumerate(batch):
+            task_name = example["task"]
+            task = task_map.get(task_name)
+            
+            if task is None:
+                continue
+            
+            batch_indices.append(idx)
+            batch_prompts.append(example["prompt"])
+            batch_tasks.append(task_name)
+            batch_labels.append(example["response"])
+            batch_task_types.append(task.task_type)
+        
+        if not batch_prompts:
+            continue
+        
+        # Nhóm theo task_type trong batch (vì có thể khác nhau)
+        by_type = defaultdict(list)
+        for j, task_type in enumerate(batch_task_types):
+            by_type[task_type].append(j)
+        
+        # Dự đoán cho từng loại task_type
+        all_preds = [None] * len(batch_prompts)
+        
+        for task_type, indices in by_type.items():
+            type_prompts = [batch_prompts[j] for j in indices]
+            decoded = predict_batch(model, tokenizer, type_prompts, task_type=task_type)
+            
+            for orig_idx, pred in zip(indices, decoded):
+                task_obj = task_map.get(batch_tasks[orig_idx])
+                
+                if task_type == "classification":
+                    all_preds[orig_idx] = _label_to_id(task_obj, pred)
+                elif task_type == "qa":
+                    all_preds[orig_idx] = pred
+                else:  # regression
+                    try:
+                        all_preds[orig_idx] = round(float(pred), 1) if pred else None
+                    except:
+                        all_preds[orig_idx] = None
+        
+        # Lưu kết quả theo đúng thứ tự
+        for j, (prompt, task_name, label, pred) in enumerate(zip(batch_prompts, batch_tasks, batch_labels, all_preds)):
             rows.append({
-                "task": task.name, "split": args.split,
-                "label": str(label), "prediction": str(pred) if pred is not None else "",
-                "method": args.method, "prompt": prompt,
+                "task": task_name,
+                "split": args.split,
+                "label": str(label),
+                "prediction": str(pred) if pred is not None else "",
+                "method": args.method,
+                "prompt": prompt,
             })
-
+        
+        # Progress report
+        if (i + batch_size) % 100 == 0 or i + batch_size >= len(full_split):
+            print(f"  Progress: {min(i+batch_size, len(full_split))}/{len(full_split)} samples")
+    
+    # Ghi kết quả
     with open(args.output_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["task", "split", "label", "prediction", "method", "prompt"])
         writer.writeheader()
         writer.writerows(rows)
-
-    print(f"\n✅ Saved to {args.output_file}")
+    
+    # Thống kê
+    task_counts = defaultdict(int)
+    for row in rows:
+        task_counts[row["task"]] += 1
+    
+    print(f"\n✅ Saved {len(rows)} predictions to {args.output_file}")
+    print(f"\n📊 Task distribution:")
+    for task, count in sorted(task_counts.items()):
+        print(f"  {task}: {count} samples")
 
 
 if __name__ == "__main__":
