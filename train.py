@@ -2,7 +2,7 @@ import argparse
 import os
 import torch
 from datasets import load_from_disk
-from transformers import TrainingArguments, set_seed, EarlyStoppingCallback
+from transformers import TrainingArguments, set_seed, EarlyStoppingCallback, Trainer
 from trl import SFTTrainer
 from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
