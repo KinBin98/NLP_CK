@@ -143,7 +143,7 @@ def main(args):
         print(f"  Filtered to {len(full_split)} samples for task '{args.task}'")
     
     rows = []
-    batch_size = 4
+    batch_size = 6
     
     # Duyệt theo batch, giữ nguyên thứ tự shuffle
     for i in range(0, len(full_split), batch_size):
