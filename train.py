@@ -90,8 +90,8 @@ def main(args):
         per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
         warmup_ratio=WARMUP_RATIO,
-        max_steps=args.max_steps,  # Dùng từ arg
-        learning_rate=args.learning_rate,  # Dùng từ arg
+        max_steps=args.max_steps,
+        learning_rate=args.learning_rate,
         fp16=not bf16,
         bf16=bf16,
         logging_steps=args.logging_steps,
@@ -105,6 +105,7 @@ def main(args):
         greater_is_better=False,
         optim="adamw_8bit",
         report_to="none",
+        remove_unused_columns=False,  
     )
 
     trainer = Trainer(
