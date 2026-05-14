@@ -8,6 +8,7 @@ from datasets import load_from_disk
 from transformers import set_seed
 from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
+from peft import PeftModel  # THÊM IMPORT
 
 from config import DEFAULT_MODEL, SEED, TASKS
 
@@ -25,7 +26,9 @@ def load_model(model_name, load_in_4bit=True):
     return model, tokenizer
 
 
-def load_checkpoint_model(checkpoint_path, model_name):
+def load_finetuned_model(checkpoint_path, model_name):
+    """Load model đã fine-tune từ thư mục (saved by trainer.model.save_pretrained)"""
+    # Load base model
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
         max_seq_length=1024,
@@ -34,9 +37,9 @@ def load_checkpoint_model(checkpoint_path, model_name):
     )
     tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
     tokenizer.padding_side = 'left'
-    if checkpoint_path:
-        state = torch.load(checkpoint_path, map_location="cpu")
-        model.load_state_dict(state, strict=False)
+
+    print(f"📁 Loading LoRA weights from: {checkpoint_path}")
+    model = PeftModel.from_pretrained(model, checkpoint_path)
     FastLanguageModel.for_inference(model)
     return model, tokenizer
 
@@ -126,7 +129,18 @@ def main(args):
     dataset = load_from_disk(args.dataset_dir)
 
     print(f"\n🚀 Loading model: {args.model_name}")
-    model, tokenizer = load_model(args.model_name, load_in_4bit=True)
+    
+    # ✅ FIX: Load đúng model dựa trên method
+    if args.method == "checkpoint" and args.checkpoint:
+        # Kiểm tra checkpoint tồn tại
+        if not os.path.exists(args.checkpoint):
+            print(f"⚠️ Checkpoint not found: {args.checkpoint}")
+            print(f"   Falling back to baseline model")
+            model, tokenizer = load_model(args.model_name, load_in_4bit=True)
+        else:
+            model, tokenizer = load_finetuned_model(args.checkpoint, args.model_name)
+    else:
+        model, tokenizer = load_model(args.model_name, load_in_4bit=True)
 
     if args.split not in dataset:
         print(f"⚠️ Split '{args.split}' not found")
@@ -235,10 +249,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--method", type=str, choices=["checkpoint", "baseline"], required=True)
     parser.add_argument("--task", type=str, default=None)
-    parser.add_argument("--split", type=str, default="validation")
+    parser.add_argument("--split", type=str, default="test")  # Mặc định test
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL)
-    parser.add_argument("--dataset_dir", type=str, default="data_processed")
+    parser.add_argument("--dataset_dir", type=str, default="data/merged")
     parser.add_argument("--output_file", type=str, default=os.path.join("outputs", "predictions", "predictions.csv"))
     args = parser.parse_args()
     main(args)

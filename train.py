@@ -1,258 +1,230 @@
+# train.py - Phiên bản đầy đủ với các argument tùy chỉnh
 import argparse
-import csv
 import os
-import re
 import torch
-from collections import defaultdict
 from datasets import load_from_disk
-from transformers import set_seed
-from unsloth import FastLanguageModel
-from unsloth.chat_templates import get_chat_template
-from peft import PeftModel  # THÊM IMPORT
+from transformers import (
+    AutoModelForCausalLM, AutoTokenizer,
+    TrainingArguments, set_seed, EarlyStoppingCallback, Trainer,
+    BitsAndBytesConfig
+)
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
-from config import DEFAULT_MODEL, SEED, TASKS
-
-
-def load_model(model_name, load_in_4bit=True):
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_name,
-        max_seq_length=1024,
-        dtype=None,
-        load_in_4bit=load_in_4bit,
-    )
-    tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
-    tokenizer.padding_side = 'left'
-    FastLanguageModel.for_inference(model)
-    return model, tokenizer
+from config import DEFAULT_MODEL, OUTPUT_DIR, SEED
 
 
-def load_finetuned_model(checkpoint_path, model_name):
-    """Load model đã fine-tune từ thư mục (saved by trainer.model.save_pretrained)"""
-    # Load base model
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_name,
-        max_seq_length=1024,
-        dtype=None,
+def load_model(model_name, max_seq_length, gradient_checkpointing):
+    # BitsAndBytes config for 4-bit quantization
+    bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
     )
-    tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
+    
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     tokenizer.padding_side = 'left'
-
-    print(f"📁 Loading LoRA weights from: {checkpoint_path}")
-    model = PeftModel.from_pretrained(model, checkpoint_path)
-    FastLanguageModel.for_inference(model)
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.add_eos_token = True
+    
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=bnb_config,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    
+    model = prepare_model_for_kbit_training(model)
+    
+    # LoRA config
+    lora_config = LoraConfig(
+        r=16,
+        lora_alpha=16,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        lora_dropout=0.0,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+    model = get_peft_model(model, lora_config)
+    
     return model, tokenizer
 
 
-def predict_batch(model, tokenizer, prompts, task_type="classification", max_new_tokens=20):
-    formatted_prompts = []
-    for p in prompts:
-        messages = [{"role": "user", "content": p.strip()}]
-        formatted = tokenizer.apply_chat_template(
-            messages, 
-            tokenize=False, 
-            add_generation_prompt=True
-        )
-        formatted_prompts.append(formatted)
+def format_and_tokenize(examples, tokenizer, max_seq_length):
+    """Format chat template và tokenize"""
+    texts = []
+    for p, r in zip(examples["prompt"], examples["response"]):
+        messages = [
+            {"role": "user", "content": p},
+            {"role": "assistant", "content": r}
+        ]
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+        texts.append(text)
     
-    if task_type == "qa":
-        max_new_tokens = 50
-        temperature = 0.5
-        do_sample = True
-    elif task_type == "regression":
-        max_new_tokens = 20
-        temperature = 0.1
-        do_sample = False
-    else:
-        max_new_tokens = 5
-        temperature = 0.1
-        do_sample = False
-    
-    inputs = tokenizer(
-        formatted_prompts, 
-        return_tensors="pt", 
+    # Tokenize
+    tokenized = tokenizer(
+        texts, 
+        truncation=True, 
         padding=True, 
-        truncation=True,
-        max_length=1024,
-        padding_side='left'
-    ).to(model.device)
-    
-    outputs = model.generate(
-        **inputs,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        do_sample=do_sample,
-        top_p=0.9 if do_sample else None,
-        pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id
+        max_length=max_seq_length,
+        return_tensors=None,
     )
-    
-    decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
-    
-    cleaned = []
-    for d in decoded:
-        if "assistant" in d.lower():
-            d = d.lower().split("assistant")[-1].strip()
-        
-        if task_type == "classification":
-            match = re.search(r'\b[0-3]\b', d)
-            cleaned.append(match.group(0) if match else "")
-        elif task_type == "regression":
-            match = re.search(r'\b\d+(?:\.\d+)?\b', d)
-            cleaned.append(match.group(0) if match else "")
-        elif task_type == "qa":
-            cleaned.append(d if d else "")
-    
-    return cleaned
-
-
-def normalize_label(text):
-    if text is None:
-        return ""
-    return re.sub(r"[^a-zA-Z0-9_ ]", "", str(text)).strip().lower().replace(" ", "_")
-
-
-def _label_to_id(task, label_text):
-    if task.task_type != "classification" or label_text is None:
-        return label_text
-    try:
-        return int(label_text)
-    except (ValueError, TypeError):
-        reverse_map = {normalize_label(v): k for k, v in task.label_map.items()}
-        return reverse_map.get(normalize_label(str(label_text)), None)
+    tokenized["labels"] = tokenized["input_ids"].copy()
+    return tokenized
 
 
 def main(args):
     set_seed(SEED)
-    os.makedirs(os.path.dirname(args.output_file) or ".", exist_ok=True)
 
-    print(f"Loading dataset from {args.dataset_dir}")
+    print("=" * 60)
+    print("🚀 STARTING TRAINING")
+    print("=" * 60)
+    print(f"📌 Model: {args.model_name}")
+    print(f"📌 Task: {args.task if args.task else 'multi-task'}")
+    print(f"📌 Max seq length: {args.max_seq_length}")
+    print(f"📌 Batch size: {args.batch_size}")
+    print(f"📌 Gradient accumulation: {args.gradient_accumulation}")
+    print(f"📌 Effective batch: {args.batch_size * args.gradient_accumulation}")
+    print(f"📌 Max steps: {args.max_steps}")
+    print(f"📌 Learning rate: {args.learning_rate}")
+    print(f"📌 Gradient checkpointing: {args.gradient_checkpointing}")
+    print(f"📌 Warmup steps: {args.warmup_steps}")
+    print(f"📌 Early stopping patience: {args.early_stopping_patience}")
+    print("=" * 60)
+
+    # Load dataset
+    print(f"\n📂 Loading dataset from {args.dataset_dir}")
     dataset = load_from_disk(args.dataset_dir)
 
-    print(f"\n🚀 Loading model: {args.model_name}")
-    
-    # ✅ FIX: Load đúng model dựa trên method
-    if args.method == "checkpoint" and args.checkpoint:
-        # Kiểm tra checkpoint tồn tại
-        if not os.path.exists(args.checkpoint):
-            print(f"⚠️ Checkpoint not found: {args.checkpoint}")
-            print(f"   Falling back to baseline model")
-            model, tokenizer = load_model(args.model_name, load_in_4bit=True)
-        else:
-            model, tokenizer = load_finetuned_model(args.checkpoint, args.model_name)
-    else:
-        model, tokenizer = load_model(args.model_name, load_in_4bit=True)
-
-    if args.split not in dataset:
-        print(f"⚠️ Split '{args.split}' not found")
-        return
-    
-    full_split = dataset[args.split]
-    task_map = {task.name: task for task in TASKS}
-    
-    print(f"\n📊 Processing {len(full_split)} samples from {args.split} split")
-    
-    # Lọc theo task nếu có
     if args.task:
-        full_split = full_split.filter(lambda ex: ex["task"] == args.task)
-        print(f"  Filtered to {len(full_split)} samples for task '{args.task}'")
+        print(f"Single-task mode: {args.task}")
+        train_ds = dataset["train"].filter(lambda ex: ex["task"] == args.task)
+        mode = f"single_{args.task}"
+    else:
+        print("Multi-task mode")
+        train_ds = dataset["train"]
+        mode = "multi"
+
+    print(f"Training samples: {len(train_ds):,}")
+
+    eval_ds = None
+    if "validation" in dataset:
+        eval_ds = dataset["validation"].filter(lambda ex: ex["task"] == args.task) if args.task else dataset["validation"]
+        print(f"Validation samples: {len(eval_ds):,}")
+
+    # Load model
+    print(f"\n🔄 Loading model...")
+    model, tokenizer = load_model(args.model_name, args.max_seq_length, args.gradient_checkpointing)
+
+    # Format and tokenize datasets
+    print("📝 Formatting and tokenizing datasets...")
+    train_ds = train_ds.map(
+        lambda x: format_and_tokenize(x, tokenizer, args.max_seq_length), 
+        batched=True, 
+        remove_columns=train_ds.column_names
+    )
+    if eval_ds:
+        eval_ds = eval_ds.map(
+            lambda x: format_and_tokenize(x, tokenizer, args.max_seq_length), 
+            batched=True, 
+            remove_columns=eval_ds.column_names
+        )
+
+    # Set dataset format for PyTorch
+    train_ds.set_format(type='torch', columns=['input_ids', 'attention_mask', 'labels'])
+    if eval_ds:
+        eval_ds.set_format(type='torch', columns=['input_ids', 'attention_mask', 'labels'])
+
+    # Training arguments
+    bf16 = torch.cuda.is_bf16_supported()
+    training_args = TrainingArguments(
+        output_dir=os.path.join(args.output_dir, mode),
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation,
+        warmup_steps=args.warmup_steps,
+        max_steps=args.max_steps,
+        learning_rate=args.learning_rate,
+        fp16=not bf16,
+        bf16=bf16,
+        logging_steps=args.logging_steps,
+        save_steps=args.save_steps,
+        save_total_limit=2,
+        eval_strategy="steps" if eval_ds else "no",
+        eval_steps=args.eval_steps,
+        gradient_checkpointing=args.gradient_checkpointing,
+        load_best_model_at_end=bool(eval_ds) and args.early_stopping_patience > 0,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
+        optim="adamw_8bit",
+        report_to="none",
+        remove_unused_columns=False,
+    )
     
-    rows = []
-    batch_size = 6
-    
-    # Duyệt theo batch, giữ nguyên thứ tự shuffle
-    for i in range(0, len(full_split), batch_size):
-        # Lấy batch indices
-        batch_indices = list(range(i, min(i + batch_size, len(full_split))))
-        
-        # Lấy dữ liệu cho batch
-        batch_prompts = []
-        batch_tasks = []
-        batch_labels = []
-        batch_task_types = []
-        batch_task_objs = []
-        
-        for idx in batch_indices:
-            example = full_split[idx]
-            task_name = example["task"]
-            task = task_map.get(task_name)
-            
-            if task is None:
-                continue
-            
-            batch_prompts.append(example["prompt"])
-            batch_tasks.append(task_name)
-            batch_labels.append(example["response"])
-            batch_task_types.append(task.task_type)
-            batch_task_objs.append(task)
-        
-        if not batch_prompts:
-            continue
-        
-        # Nhóm theo task_type trong batch (vì có thể khác nhau)
-        by_type = defaultdict(list)
-        for j, task_type in enumerate(batch_task_types):
-            by_type[task_type].append(j)
-        
-        # Dự đoán cho từng loại task_type
-        all_preds = [None] * len(batch_prompts)
-        
-        for task_type, indices in by_type.items():
-            type_prompts = [batch_prompts[j] for j in indices]
-            decoded = predict_batch(model, tokenizer, type_prompts, task_type=task_type)
-            
-            for orig_idx, pred in zip(indices, decoded):
-                task_obj = batch_task_objs[orig_idx]
-                
-                if task_type == "classification":
-                    all_preds[orig_idx] = _label_to_id(task_obj, pred)
-                elif task_type == "qa":
-                    all_preds[orig_idx] = pred
-                else:  # regression
-                    try:
-                        all_preds[orig_idx] = round(float(pred), 1) if pred else None
-                    except:
-                        all_preds[orig_idx] = None
-        
-        # Lưu kết quả theo đúng thứ tự
-        for j in range(len(batch_prompts)):
-            rows.append({
-                "task": batch_tasks[j],
-                "split": args.split,
-                "label": str(batch_labels[j]),
-                "prediction": str(all_preds[j]) if all_preds[j] is not None else "",
-                "method": args.method,
-                "prompt": batch_prompts[j],
-            })
-        
-        # Progress report
-        if (i + batch_size) % 100 == 0 or i + batch_size >= len(full_split):
-            print(f"  Progress: {min(i+batch_size, len(full_split))}/{len(full_split)} samples")
-    
-    # Ghi kết quả
-    with open(args.output_file, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["task", "split", "label", "prediction", "method", "prompt"])
-        writer.writeheader()
-        writer.writerows(rows)
-    
-    # Thống kê
-    task_counts = defaultdict(int)
-    for row in rows:
-        task_counts[row["task"]] += 1
-    
-    print(f"\n✅ Saved {len(rows)} predictions to {args.output_file}")
-    print(f"\n📊 Task distribution:")
-    for task, count in sorted(task_counts.items()):
-        print(f"  {task}: {count} samples")
+    # Trainer
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_ds,
+        eval_dataset=eval_ds,
+    )
+
+    if eval_ds and args.early_stopping_patience > 0:
+        trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience))
+
+    print("\n🎯 Starting training...")
+    trainer.train()
+
+    # Save model
+    output_dir = os.path.join(args.output_dir, f"{mode}_final")
+    os.makedirs(output_dir, exist_ok=True)
+    trainer.model.save_pretrained(output_dir)
+    tokenizer.save_pretrained(output_dir)
+    print(f"\n✅ Model saved to {output_dir}")
+    print("=" * 60)
+    print("✅ TRAINING COMPLETED")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--method", type=str, choices=["checkpoint", "baseline"], required=True)
-    parser.add_argument("--task", type=str, default=None)
-    parser.add_argument("--split", type=str, default="test")  # Mặc định test
-    parser.add_argument("--checkpoint", type=str, default=None)
-    parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL)
-    parser.add_argument("--dataset_dir", type=str, default="data/merged")
-    parser.add_argument("--output_file", type=str, default=os.path.join("outputs", "predictions", "predictions.csv"))
+    parser = argparse.ArgumentParser(description="Train Qwen3 with LoRA on NLP tasks")
+    
+    # Dữ liệu
+    parser.add_argument("--dataset_dir", type=str, default="data/merged",
+                        help="Path to processed dataset")
+    parser.add_argument("--task", type=str, default=None,
+                        help="Task name for single-task training")
+    parser.add_argument("--output_dir", type=str, default=OUTPUT_DIR,
+                        help="Output directory for checkpoints")
+    parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL,
+                        help="Base model name")
+    
+    # Tốc độ và VRAM (quan trọng nhất)
+    parser.add_argument("--max_seq_length", type=int, default=512,
+                        help="Max sequence length (smaller = faster, 256-1024)")
+    parser.add_argument("--batch_size", type=int, default=4,
+                        help="Per device batch size (larger = faster but more VRAM)")
+    parser.add_argument("--gradient_accumulation", type=int, default=2,
+                        help="Gradient accumulation steps (effective batch = batch_size * this)")
+    parser.add_argument("--gradient_checkpointing", action="store_true", default=False,
+                        help="Enable gradient checkpointing (slower but less VRAM)")
+    
+    # Học
+    parser.add_argument("--learning_rate", type=float, default=2e-4,
+                        help="Learning rate")
+    parser.add_argument("--max_steps", type=int, default=625,
+                        help="Max training steps (625 for 1 epoch with effective batch 16)")
+    parser.add_argument("--warmup_steps", type=int, default=50,
+                        help="Warmup steps")
+    parser.add_argument("--early_stopping_patience", type=int, default=3,
+                        help="Early stopping patience (0 to disable)")
+    
+    # Logging và checkpoint
+    parser.add_argument("--logging_steps", type=int, default=10,
+                        help="Log every N steps")
+    parser.add_argument("--save_steps", type=int, default=250,
+                        help="Save checkpoint every N steps")
+    parser.add_argument("--eval_steps", type=int, default=250,
+                        help="Evaluate every N steps")
+    
     args = parser.parse_args()
     main(args)
