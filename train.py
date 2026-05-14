@@ -3,10 +3,12 @@ from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
 
 # Sau đó mới import các thư viện khác
+import argparse  # THÊM DÒNG NÀY
+import os
 import torch
 from datasets import load_from_disk
 from transformers import TrainingArguments, set_seed, EarlyStoppingCallback
-from trl import SFTTrainer  # Dùng SFTTrainer thay vì Trainer
+from trl import SFTTrainer
 
 from config import (
     DEFAULT_MODEL, GRADIENT_ACCUMULATION_STEPS, LEARNING_RATE,
