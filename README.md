@@ -57,15 +57,29 @@ Single-task training:
 python train.py --dataset_dir data/merged --task sst2 --output_dir outputs/checkpoints
 ```
 
-By default, checkpoints are saved as:
-- `outputs/checkpoints/multi_checkpoint.pt` for multi-task runs
-- `outputs/checkpoints/single_<task>_checkpoint.pt` for single-task runs
+Advanced training options:
+
+```bash
+python train.py --dataset_dir data/merged --output_dir outputs/checkpoints \
+    --learning_rate 2e-4 \
+    --max_steps 1250 \
+    --early_stopping_patience 3 \
+    --logging_steps 10 \
+    --save_steps 250 \
+    --eval_steps 250
+```
+
+By default, model checkpoints are saved to:
+- `outputs/checkpoints/multi_final/` for multi-task runs
+- `outputs/checkpoints/single_<task>_final/` for single-task runs
+
+The final model weights, config, and tokenizer are stored in these directories.
 
 ## Prediction
 
-`test.py` supports two modes:
-- `baseline` uses the base model without LoRA weights
-- `checkpoint` loads a saved LoRA checkpoint
+`test.py` supports two inference modes:
+- `baseline` uses the base model without fine-tuning
+- `checkpoint` loads a saved fine-tuned model from a checkpoint directory
 
 Examples:
 
@@ -75,15 +89,17 @@ python test.py --method baseline --split test --dataset_dir data/merged \
     --output_file outputs/predictions/baseline.csv
 
 # Multi-task checkpoint
-python test.py --method checkpoint --checkpoint outputs/checkpoints/multi_checkpoint.pt \
+python test.py --method checkpoint --checkpoint outputs/checkpoints/multi_final \
     --split test --dataset_dir data/merged \
     --output_file outputs/predictions/multitask.csv
 
 # Single-task checkpoint
-python test.py --method checkpoint --checkpoint outputs/checkpoints/single_sst2_checkpoint.pt \
+python test.py --method checkpoint --checkpoint outputs/checkpoints/single_sst2_final \
     --task sst2 --split test --dataset_dir data/merged \
     --output_file outputs/predictions/single_sst2.csv
 ```
+
+The `--checkpoint` argument expects a directory containing the fine-tuned model weights (from the `*_final/` directories saved after training).
 
 If you run `test.py` on a custom merged dataset path, pass it explicitly with `--dataset_dir`.
 
@@ -143,14 +159,15 @@ python evaluation/plot_metrics.py --output_dir outputs/plots
 
 ## Key Configuration
 
-Edit `config.py` to change:
-- `DEFAULT_MODEL`
-- `MAX_SEQ_LENGTH`
-- `LEARNING_RATE`
-- `PER_DEVICE_BATCH_SIZE`
-- `GRADIENT_ACCUMULATION_STEPS`
-- `MAX_STEPS`
-- `WARMUP_STEPS`
+Edit `config.py` to change default hyperparameters:
+- `DEFAULT_MODEL` - Model to use (default: `unsloth/Qwen3-4B-Instruct-2507-unsloth-bnb-4bit`)
+- `MAX_SEQ_LENGTH` - Maximum sequence length for the model
+- `LEARNING_RATE` - Default learning rate (can be overridden via `--learning_rate`)
+- `PER_DEVICE_BATCH_SIZE` - Batch size per device
+- `GRADIENT_ACCUMULATION_STEPS` - Number of gradient accumulation steps
+- `MAX_STEPS` - Default maximum training steps
+- `WARMUP_RATIO` - Ratio of steps to use for learning rate warmup
+- `SEED` - Random seed for reproducibility
 
 ## Notes
 

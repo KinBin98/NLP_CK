@@ -201,7 +201,7 @@ if __name__ == "__main__":
     parser.add_argument("--split", type=str, default="validation")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL)
-    parser.add_argument("--dataset_dir", type=str, default="data_processed")
+    parser.add_argument("--dataset_dir", type=str, default="data/merged")
     parser.add_argument("--output_file", type=str, default=os.path.join("outputs", "predictions", "predictions.csv"))
     args = parser.parse_args()
     main(args)
