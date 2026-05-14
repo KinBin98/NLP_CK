@@ -1,4 +1,4 @@
-# train.py - Phiên bản ổn định cho Kaggle (không unsloth)
+# train.py - Phiên bản đầy đủ với các argument tùy chỉnh
 import argparse
 import os
 import torch
@@ -10,14 +10,10 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
-from config import (
-    DEFAULT_MODEL, GRADIENT_ACCUMULATION_STEPS, LEARNING_RATE,
-    MAX_SEQ_LENGTH, OUTPUT_DIR, PER_DEVICE_BATCH_SIZE,
-    SEED, WARMUP_STEPS  # Đổi WARMUP_RATIO thành WARMUP_STEPS
-)
+from config import DEFAULT_MODEL, OUTPUT_DIR, SEED
 
 
-def load_model(model_name):
+def load_model(model_name, max_seq_length, gradient_checkpointing):
     # BitsAndBytes config for 4-bit quantization
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -54,7 +50,7 @@ def load_model(model_name):
     return model, tokenizer
 
 
-def format_and_tokenize(examples, tokenizer):
+def format_and_tokenize(examples, tokenizer, max_seq_length):
     """Format chat template và tokenize"""
     texts = []
     for p, r in zip(examples["prompt"], examples["response"]):
@@ -70,7 +66,7 @@ def format_and_tokenize(examples, tokenizer):
         texts, 
         truncation=True, 
         padding=True, 
-        max_length=MAX_SEQ_LENGTH,
+        max_length=max_seq_length,
         return_tensors=None,
     )
     tokenized["labels"] = tokenized["input_ids"].copy()
@@ -83,11 +79,21 @@ def main(args):
     print("=" * 60)
     print("🚀 STARTING TRAINING")
     print("=" * 60)
-    print(f"📌 Config: lr={args.learning_rate}, steps={args.max_steps}, batch={PER_DEVICE_BATCH_SIZE}")
-    print(f"📌 Early stopping patience={args.early_stopping_patience}")
+    print(f"📌 Model: {args.model_name}")
+    print(f"📌 Task: {args.task if args.task else 'multi-task'}")
+    print(f"📌 Max seq length: {args.max_seq_length}")
+    print(f"📌 Batch size: {args.batch_size}")
+    print(f"📌 Gradient accumulation: {args.gradient_accumulation}")
+    print(f"📌 Effective batch: {args.batch_size * args.gradient_accumulation}")
+    print(f"📌 Max steps: {args.max_steps}")
+    print(f"📌 Learning rate: {args.learning_rate}")
+    print(f"📌 Gradient checkpointing: {args.gradient_checkpointing}")
+    print(f"📌 Warmup steps: {args.warmup_steps}")
+    print(f"📌 Early stopping patience: {args.early_stopping_patience}")
     print("=" * 60)
 
     # Load dataset
+    print(f"\n📂 Loading dataset from {args.dataset_dir}")
     dataset = load_from_disk(args.dataset_dir)
 
     if args.task:
@@ -107,19 +113,19 @@ def main(args):
         print(f"Validation samples: {len(eval_ds):,}")
 
     # Load model
-    print(f"\nLoading model: {args.model_name}")
-    model, tokenizer = load_model(args.model_name)
+    print(f"\n🔄 Loading model...")
+    model, tokenizer = load_model(args.model_name, args.max_seq_length, args.gradient_checkpointing)
 
     # Format and tokenize datasets
-    print("Formatting and tokenizing datasets...")
+    print("📝 Formatting and tokenizing datasets...")
     train_ds = train_ds.map(
-        lambda x: format_and_tokenize(x, tokenizer), 
+        lambda x: format_and_tokenize(x, tokenizer, args.max_seq_length), 
         batched=True, 
         remove_columns=train_ds.column_names
     )
     if eval_ds:
         eval_ds = eval_ds.map(
-            lambda x: format_and_tokenize(x, tokenizer), 
+            lambda x: format_and_tokenize(x, tokenizer, args.max_seq_length), 
             batched=True, 
             remove_columns=eval_ds.column_names
         )
@@ -133,9 +139,9 @@ def main(args):
     bf16 = torch.cuda.is_bf16_supported()
     training_args = TrainingArguments(
         output_dir=os.path.join(args.output_dir, mode),
-        per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
-        gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-        warmup_steps=WARMUP_STEPS,  # Sửa: warmup_ratio -> warmup_steps
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation,
+        warmup_steps=args.warmup_steps,
         max_steps=args.max_steps,
         learning_rate=args.learning_rate,
         fp16=not bf16,
@@ -145,8 +151,8 @@ def main(args):
         save_total_limit=2,
         eval_strategy="steps" if eval_ds else "no",
         eval_steps=args.eval_steps,
-        gradient_checkpointing=True,
-        load_best_model_at_end=bool(eval_ds),
+        gradient_checkpointing=args.gradient_checkpointing,
+        load_best_model_at_end=bool(eval_ds) and args.early_stopping_patience > 0,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         optim="adamw_8bit",
@@ -154,7 +160,7 @@ def main(args):
         remove_unused_columns=False,
     )
     
-    # Trainer (bỏ tokenizer)
+    # Trainer
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -165,7 +171,7 @@ def main(args):
     if eval_ds and args.early_stopping_patience > 0:
         trainer.add_callback(EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience))
 
-    print("\nStarting training...")
+    print("\n🎯 Starting training...")
     trainer.train()
 
     # Save model
@@ -180,18 +186,39 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_dir", type=str, default="data/merged")
-    parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL)
-    parser.add_argument("--output_dir", type=str, default=OUTPUT_DIR)
-    parser.add_argument("--task", type=str, default=None)
+    parser = argparse.ArgumentParser(description="Train Qwen3 with LoRA on NLP tasks")
     
-    parser.add_argument("--learning_rate", type=float, default=LEARNING_RATE,
-                        help="Learning rate for training")
-    parser.add_argument("--max_steps", type=int, default=1250,
-                        help="Maximum training steps")
+    # Dữ liệu
+    parser.add_argument("--dataset_dir", type=str, default="data/merged",
+                        help="Path to processed dataset")
+    parser.add_argument("--task", type=str, default=None,
+                        help="Task name for single-task training")
+    parser.add_argument("--output_dir", type=str, default=OUTPUT_DIR,
+                        help="Output directory for checkpoints")
+    parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL,
+                        help="Base model name")
+    
+    # Tốc độ và VRAM (quan trọng nhất)
+    parser.add_argument("--max_seq_length", type=int, default=512,
+                        help="Max sequence length (smaller = faster, 256-1024)")
+    parser.add_argument("--batch_size", type=int, default=4,
+                        help="Per device batch size (larger = faster but more VRAM)")
+    parser.add_argument("--gradient_accumulation", type=int, default=2,
+                        help="Gradient accumulation steps (effective batch = batch_size * this)")
+    parser.add_argument("--gradient_checkpointing", action="store_true", default=False,
+                        help="Enable gradient checkpointing (slower but less VRAM)")
+    
+    # Học
+    parser.add_argument("--learning_rate", type=float, default=2e-4,
+                        help="Learning rate")
+    parser.add_argument("--max_steps", type=int, default=625,
+                        help="Max training steps (625 for 1 epoch with effective batch 16)")
+    parser.add_argument("--warmup_steps", type=int, default=50,
+                        help="Warmup steps")
     parser.add_argument("--early_stopping_patience", type=int, default=3,
                         help="Early stopping patience (0 to disable)")
+    
+    # Logging và checkpoint
     parser.add_argument("--logging_steps", type=int, default=10,
                         help="Log every N steps")
     parser.add_argument("--save_steps", type=int, default=250,
