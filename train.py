@@ -112,7 +112,7 @@ def main(args):
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
-        dataset_text_field="text",
+        text_column="text",
         max_seq_length=MAX_SEQ_LENGTH,
         packing=False,
     )
