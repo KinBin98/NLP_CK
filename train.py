@@ -109,13 +109,12 @@ def main(args):
 
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        args=training_args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         dataset_text_field="text",
         max_seq_length=MAX_SEQ_LENGTH,
         packing=False,
-        args=training_args,
     )
 
     if eval_ds and args.early_stopping_patience > 0:
