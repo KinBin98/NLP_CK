@@ -8,7 +8,7 @@ from transformers import (
     TrainingArguments, set_seed, EarlyStoppingCallback, Trainer
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from bitsandbytes import BitsAndBytesConfig
+from transformers import BitsAndBytesConfig
 
 from config import (
     DEFAULT_MODEL, GRADIENT_ACCUMULATION_STEPS, LEARNING_RATE,
