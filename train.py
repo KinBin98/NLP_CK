@@ -3,7 +3,6 @@ import os
 import torch
 from datasets import load_from_disk
 from transformers import TrainingArguments, set_seed, EarlyStoppingCallback, Trainer, DataCollatorForLanguageModeling
-from trl import SFTTrainer
 from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
 
@@ -36,7 +35,8 @@ def load_model(model_name):
     return model, tokenizer
 
 
-def format_examples(examples, tokenizer):
+def preprocess_dataset(examples, tokenizer):
+    """Format chat template và tokenize"""
     texts = []
     for p, r in zip(examples["prompt"], examples["response"]):
         messages = [
@@ -45,7 +45,11 @@ def format_examples(examples, tokenizer):
         ]
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         texts.append(text)
-    return {"text": texts}
+    
+    # Tokenize
+    tokenized = tokenizer(texts, truncation=True, max_length=MAX_SEQ_LENGTH)
+    tokenized["labels"] = tokenized["input_ids"].copy()
+    return tokenized
 
 
 def main(args):
@@ -79,10 +83,18 @@ def main(args):
     print(f"\nLoading model: {args.model_name}")
     model, tokenizer = load_model(args.model_name)
 
-    print("Formatting datasets...")
-    train_ds = train_ds.map(lambda x: format_examples(x, tokenizer), batched=True, remove_columns=train_ds.column_names)
+    print("Preprocessing datasets (format + tokenize)...")
+    train_ds = train_ds.map(
+        lambda x: preprocess_dataset(x, tokenizer), 
+        batched=True, 
+        remove_columns=train_ds.column_names
+    )
     if eval_ds:
-        eval_ds = eval_ds.map(lambda x: format_examples(x, tokenizer), batched=True, remove_columns=eval_ds.column_names)
+        eval_ds = eval_ds.map(
+            lambda x: preprocess_dataset(x, tokenizer), 
+            batched=True, 
+            remove_columns=eval_ds.column_names
+        )
 
     bf16 = torch.cuda.is_bf16_supported()
     training_args = TrainingArguments(
@@ -105,17 +117,19 @@ def main(args):
         greater_is_better=False,
         optim="adamw_8bit",
         report_to="none",
-        remove_unused_columns=False,  
+        remove_unused_columns=False,
+        group_by_length=False,  # Thêm để tránh lỗi
     )
     
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    
     trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=train_ds,
-    eval_dataset=eval_ds,
-    tokenizer=tokenizer,
-    data_collator=data_collator,  
+        model=model,
+        args=training_args,
+        train_dataset=train_ds,
+        eval_dataset=eval_ds,
+        tokenizer=tokenizer,
+        data_collator=data_collator,
     )
 
     if eval_ds and args.early_stopping_patience > 0:
@@ -141,10 +155,9 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default=OUTPUT_DIR)
     parser.add_argument("--task", type=str, default=None)
     
-    # THÊM CÁC ARGUMENT MỚI
     parser.add_argument("--learning_rate", type=float, default=LEARNING_RATE,
                         help="Learning rate for training")
-    parser.add_argument("--max_steps", type=int, default=1250,  # Đề xuất 1250 thay vì 800
+    parser.add_argument("--max_steps", type=int, default=1250,
                         help="Maximum training steps")
     parser.add_argument("--early_stopping_patience", type=int, default=3,
                         help="Early stopping patience (0 to disable)")
