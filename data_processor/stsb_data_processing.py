@@ -25,11 +25,10 @@ Similarity score (0.0 to 5.0, one decimal):"""
 
 def map_example(example):
     label_value = example.get("label", None)
-    # ✅ Giữ nguyên float (STS-B là regression)
     if label_value in (-1, None):
         response = ""
     else:
-        response = f"{float(label_value):.1f}"  # Định dạng 1 số thập phân
+        response = f"{float(label_value):.1f}"
     return {
         "prompt": make_prompt(example),
         "response": response,
@@ -55,7 +54,7 @@ def build_stsb_dataset(output_dir="data/stsb", max_train=10000, max_val=2000, ma
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
     
-    print(f"📥 Loading STS-B dataset...")
+    print("Loading STS-B dataset...")
     raw = load_dataset("gokuls/glue_augmented_stsb")
 
     train_raw = raw["train"].shuffle(seed=seed)

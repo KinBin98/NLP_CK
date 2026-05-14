@@ -3,15 +3,13 @@ import os
 from datasets import DatasetDict, concatenate_datasets, load_dataset
 
 
-# ✅ SỬA: Dùng số thay vì text
 LABEL_MAP = {
-    0: "0",  # unacceptable
-    1: "1",  # acceptable
+    0: "0",
+    1: "1",
 }
 
 
 def make_prompt(example):
-    """Build prompt với instruction rõ ràng cho CoLA task"""
     sentence = example.get('sentence', '')
     
     prompt = f"""Task: CoLA (Corpus of Linguistic Acceptability)
@@ -36,27 +34,22 @@ Answer:"""
 
 
 def make_prompt_simple(example):
-    """Version ngắn gọn hơn"""
     sentence = example.get('sentence', '')
     return f"Task: COLA\nClassify as 0=unacceptable or 1=acceptable\nSentence: {sentence}\nAnswer:"
 
 
 def map_example(example):
-    """Map raw example thành format {prompt, response, task}"""
     label_value = example.get("label", -1)
-    
-    # ✅ SỬA: Trả về string số
     response = str(label_value) if label_value in (0, 1) else ""
     
     return {
-        "prompt": make_prompt(example),  # Hoặc make_prompt_simple
-        "response": response,  # "0" hoặc "1"
+        "prompt": make_prompt(example),
+        "response": response,
         "task": "cola",
     }
 
 
 def _select_from_train(train_raw, used_indices, count):
-    """Lấy mẫu từ train set mà không trùng lặp"""
     if count <= 0:
         return train_raw.select([]), used_indices
     
@@ -73,13 +66,10 @@ def _select_from_train(train_raw, used_indices, count):
 
 
 def build_cola_dataset(output_dir="data/cola", max_train=10000, max_val=2000, max_test=3000, seed=42):
-    """
-    Build CoLA dataset với cấu trúc thư mục chuẩn
-    """
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
     
-    print(f"📥 Loading CoLA dataset...")
+    print("Loading CoLA dataset...")
     raw = load_dataset("gokuls/glue_augmented_cola")
 
     train_raw = raw["train"].shuffle(seed=seed)
@@ -88,9 +78,6 @@ def build_cola_dataset(output_dir="data/cola", max_train=10000, max_val=2000, ma
     ds = DatasetDict()
     used_indices = set()
 
-    print(f"  Splitting data...")
-    
-    # Xử lý validation set
     if val_raw is not None:
         base_val = val_raw.select(range(min(max_val, len(val_raw))))
     else:
@@ -100,58 +87,29 @@ def build_cola_dataset(output_dir="data/cola", max_train=10000, max_val=2000, ma
     extra_val, used_indices = _select_from_train(train_raw, used_indices, need_val)
     ds["validation"] = base_val if len(extra_val) == 0 else concatenate_datasets([base_val, extra_val])
 
-    # Xử lý test và train
     ds["test"], used_indices = _select_from_train(train_raw, used_indices, max_test)
     ds["train"], used_indices = _select_from_train(train_raw, used_indices, max_train)
 
-    # Convert sang format instruction
-    print(f"  Converting to instruction format...")
+    print("Converting to instruction format...")
     for split in ds:
         ds[split] = ds[split].map(map_example, remove_columns=ds[split].column_names)
 
-    # Lưu dataset
     ds.save_to_disk(output_dir)
     
-    # In thống kê
-    print(f"\n✅ Saved CoLA dataset to {output_dir}")
-    print(f"📊 Statistics:")
+    print(f"Saved CoLA dataset to {output_dir}")
     for split in ds:
-        print(f"  {split}: {len(ds[split]):,} samples")
-    
-    # Kiểm tra mẫu
-    print(f"\n📝 Sample check:")
-    sample = ds["train"][0]
-    print(f"  Task: {sample['task']}")
-    print(f"  Response: '{sample['response']}'")
-    print(f"\n  Prompt preview:")
-    print("-" * 50)
-    print(sample['prompt'][:300])
-    print("-" * 50)
-    
-    # Kiểm tra phân bố label
-    print(f"\n📊 Label distribution (first 100 samples):")
-    from collections import Counter
-    labels = [ds["train"][i]['response'] for i in range(min(100, len(ds["train"])))]
-    counter = Counter(labels)
-    for label, count in counter.items():
-        label_name = "Acceptable" if label == "1" else "Unacceptable"
-        print(f"  {label} ({label_name}): {count} samples")
+        print(f"  {split}: {len(ds[split]):,}")
     
     return ds
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir", type=str, default="data/cola", 
-                        help="Output directory for processed dataset")
-    parser.add_argument("--max_train", type=int, default=10000, 
-                        help="Maximum training samples")
-    parser.add_argument("--max_val", type=int, default=2000, 
-                        help="Maximum validation samples")
-    parser.add_argument("--max_test", type=int, default=3000, 
-                        help="Maximum test samples")
-    parser.add_argument("--seed", type=int, default=42, 
-                        help="Random seed")
+    parser.add_argument("--output_dir", type=str, default="data/cola")
+    parser.add_argument("--max_train", type=int, default=10000)
+    parser.add_argument("--max_val", type=int, default=2000)
+    parser.add_argument("--max_test", type=int, default=3000)
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
     build_cola_dataset(

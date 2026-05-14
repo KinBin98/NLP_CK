@@ -4,9 +4,9 @@ from datasets import DatasetDict, concatenate_datasets, load_dataset
 
 
 LABEL_MAP = {
-    0: "0",  # entailment
-    1: "1",  # neutral
-    2: "2",  # contradiction
+    0: "0",
+    1: "1",
+    2: "2",
 }
 
 

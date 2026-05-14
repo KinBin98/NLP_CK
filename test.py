@@ -34,9 +34,25 @@ def load_checkpoint_model(checkpoint_path, model_name):
     )
     tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
     tokenizer.padding_side = 'left'
+    
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=16,
+        lora_alpha=16,
+        lora_dropout=0.0,
+        bias="none",
+        use_gradient_checkpointing="unsloth",
+        target_modules=[
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj",
+        ],
+    )
+    
     if checkpoint_path:
         state = torch.load(checkpoint_path, map_location="cpu")
         model.load_state_dict(state, strict=False)
+        print(f"Loaded LoRA weights from {checkpoint_path}")
+    
     FastLanguageModel.for_inference(model)
     return model, tokenizer
 
@@ -125,32 +141,32 @@ def main(args):
     print(f"Loading dataset from {args.dataset_dir}")
     dataset = load_from_disk(args.dataset_dir)
 
-    print(f"\n🚀 Loading model: {args.model_name}")
-    model, tokenizer = load_model(args.model_name, load_in_4bit=True)
+    print(f"Loading model: {args.model_name}")
+    
+    if args.method == "checkpoint" and args.checkpoint:
+        model, tokenizer = load_checkpoint_model(args.checkpoint, args.model_name)
+    else:
+        model, tokenizer = load_model(args.model_name, load_in_4bit=True)
 
     if args.split not in dataset:
-        print(f"⚠️ Split '{args.split}' not found")
+        print(f"Split '{args.split}' not found")
         return
     
     full_split = dataset[args.split]
     task_map = {task.name: task for task in TASKS}
     
-    print(f"\n📊 Processing {len(full_split)} samples from {args.split} split")
+    print(f"Processing {len(full_split)} samples from {args.split} split")
     
-    # Lọc theo task nếu có
     if args.task:
         full_split = full_split.filter(lambda ex: ex["task"] == args.task)
-        print(f"  Filtered to {len(full_split)} samples for task '{args.task}'")
+        print(f"Filtered to {len(full_split)} samples for task '{args.task}'")
     
     rows = []
     batch_size = 6
     
-    # Duyệt theo batch, giữ nguyên thứ tự shuffle
     for i in range(0, len(full_split), batch_size):
-        # Lấy batch indices
         batch_indices = list(range(i, min(i + batch_size, len(full_split))))
         
-        # Lấy dữ liệu cho batch
         batch_prompts = []
         batch_tasks = []
         batch_labels = []
@@ -174,12 +190,10 @@ def main(args):
         if not batch_prompts:
             continue
         
-        # Nhóm theo task_type trong batch (vì có thể khác nhau)
         by_type = defaultdict(list)
         for j, task_type in enumerate(batch_task_types):
             by_type[task_type].append(j)
         
-        # Dự đoán cho từng loại task_type
         all_preds = [None] * len(batch_prompts)
         
         for task_type, indices in by_type.items():
@@ -193,13 +207,12 @@ def main(args):
                     all_preds[orig_idx] = _label_to_id(task_obj, pred)
                 elif task_type == "qa":
                     all_preds[orig_idx] = pred
-                else:  # regression
+                else:
                     try:
                         all_preds[orig_idx] = round(float(pred), 1) if pred else None
                     except:
                         all_preds[orig_idx] = None
         
-        # Lưu kết quả theo đúng thứ tự
         for j in range(len(batch_prompts)):
             rows.append({
                 "task": batch_tasks[j],
@@ -210,23 +223,20 @@ def main(args):
                 "prompt": batch_prompts[j],
             })
         
-        # Progress report
         if (i + batch_size) % 100 == 0 or i + batch_size >= len(full_split):
-            print(f"  Progress: {min(i+batch_size, len(full_split))}/{len(full_split)} samples")
+            print(f"Progress: {min(i+batch_size, len(full_split))}/{len(full_split)} samples")
     
-    # Ghi kết quả
     with open(args.output_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["task", "split", "label", "prediction", "method", "prompt"])
         writer.writeheader()
         writer.writerows(rows)
     
-    # Thống kê
     task_counts = defaultdict(int)
     for row in rows:
         task_counts[row["task"]] += 1
     
-    print(f"\n✅ Saved {len(rows)} predictions to {args.output_file}")
-    print(f"\n📊 Task distribution:")
+    print(f"Saved {len(rows)} predictions to {args.output_file}")
+    print(f"Task distribution:")
     for task, count in sorted(task_counts.items()):
         print(f"  {task}: {count} samples")
 

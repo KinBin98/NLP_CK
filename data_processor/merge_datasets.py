@@ -1,8 +1,3 @@
-"""
-Merge individual task datasets into a single consolidated dataset.
-SHUFFLE/TRỘN dữ liệu giữa các task để tránh học theo thứ tự task.
-"""
-
 import os
 import sys
 from pathlib import Path
@@ -11,7 +6,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from config import TASKS
 
-# ✅ SỬA: Đường dẫn đúng với cấu trúc thư mục mới
 TASK_FOLDERS = {
     "sst2": "data/data_sst2_v2",
     "mnli": "data/data_mnli",
@@ -23,30 +17,23 @@ TASK_FOLDERS = {
 
 
 def merge_datasets(output_dir="data/merged", shuffle_seed=42):
-    """Merge all individual task datasets into ONE consolidated dataset with SHUFFLING."""
-    
-    print("\n" + "="*70)
-    print("🔀 MERGING + SHUFFLING INDIVIDUAL TASK DATASETS")
-    print("="*70)
-    
     os.makedirs(output_dir, exist_ok=True)
     
     merged = DatasetDict()
     task_stats = {}
     
-    # 1. Load và gộp dữ liệu thô (chưa shuffle)
-    print("\n📂 Loading and merging tasks...")
+    print("Loading and merging tasks...")
     for task in TASKS:
         task_name = task.name
         folder_name = TASK_FOLDERS.get(task_name)
         
         if not folder_name:
-            print(f"⚠️  No folder mapping for task: {task_name}")
+            print(f"Warning: No folder mapping for task {task_name}")
             continue
         
         folder_path = Path(folder_name)
         if not folder_path.exists():
-            print(f"⚠️  Folder not found: {folder_name}")
+            print(f"Warning: Folder not found {folder_name}")
             continue
         
         print(f"  Loading {task_name}...")
@@ -63,16 +50,12 @@ def merge_datasets(output_dir="data/merged", shuffle_seed=42):
                 else:
                     merged[split] = concatenate_datasets([merged[split], task_ds[split]])
     
-    # 2. TRỘN DỮ LIỆU (shuffle) để các task đan xen nhau
-    print("\n🔀 Shuffling data (mixing tasks together)...")
+    print("Shuffling data...")
     for split in merged:
-        print(f"  {split}: {len(merged[split]):,} samples → shuffling...")
+        print(f"  {split}: {len(merged[split]):,} samples")
         merged[split] = merged[split].shuffle(seed=shuffle_seed)
     
-    # 3. In thống kê sau khi trộn
-    print("\n" + "="*70)
-    print("📊 FINAL MERGED DATASET STATISTICS")
-    print("="*70)
+    print("Merged dataset statistics:")
     print(f"{'Task':<14} {'Train':>10} {'Validation':>12} {'Test':>10}")
     print("-"*50)
     
@@ -81,24 +64,19 @@ def merge_datasets(output_dir="data/merged", shuffle_seed=42):
     
     print("-"*50)
     print(f"{'TOTAL':<14} {len(merged.get('train', [])):>10,} {len(merged.get('validation', [])):>12,} {len(merged.get('test', [])):>10,}")
-    print("="*70)
     
-    # 4. Kiểm tra phân bố task sau khi trộn
-    print("\n🔍 CHECKING TASK DISTRIBUTION (first 100 samples of train):")
-    print("-"*50)
     if "train" in merged:
         task_counts = {}
         for i in range(min(100, len(merged['train']))):
             task = merged['train'][i].get('task', 'unknown')
             task_counts[task] = task_counts.get(task, 0) + 1
         
+        print("Task distribution (first 100 samples):")
         for task, count in sorted(task_counts.items()):
-            print(f"  {task}: {count} samples")
+            print(f"  {task}: {count}")
     
-    # 5. Save merged dataset
-    print(f"\n💾 Saving merged dataset to {output_dir}...")
+    print(f"Saving merged dataset to {output_dir}...")
     merged.save_to_disk(output_dir)
-    print(f"✅ Merged dataset saved!")
     
     return merged
 

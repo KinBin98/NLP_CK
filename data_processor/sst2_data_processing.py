@@ -19,11 +19,10 @@ Answer (0 or 1):"""
 
 def map_example(example):
     label_value = example.get("label", -1)
-    # ✅ SỬA: Trả về số
     response = str(label_value) if label_value in (0, 1) else ""
     return {
         "prompt": make_prompt(example),
-        "response": response,  # "0" hoặc "1"
+        "response": response,
         "task": "sst2",
     }
 
@@ -52,7 +51,7 @@ def build_sst2_dataset(
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
     
-    print(f"📥 Loading SST-2 dataset...")
+    print("Loading SST-2 dataset...")
     raw = load_dataset("glue", "sst2")
 
     train_raw = raw["train"].shuffle(seed=seed)
@@ -81,13 +80,12 @@ def build_sst2_dataset(
 
     ds.save_to_disk(output_dir)
     
-    print(f"\n✅ Saved SST-2 dataset to {output_dir}")
-    print(f"📊 Statistics:")
+    print(f"Saved SST-2 dataset to {output_dir}")
+    print("Statistics:")
     for split in ds:
         print(f"  {split}: {len(ds[split]):,} samples")
     
-    # Kiểm tra mẫu
-    print(f"\n📝 Sample check:")
+    print("Sample check:")
     sample = ds["train"][0]
     print(f"  Task: {sample['task']}")
     print(f"  Response: '{sample['response']}'")

@@ -55,7 +55,7 @@ def build_squad_dataset(output_dir="data/squad", max_train=10000, max_val=2000, 
     output_dir = os.path.abspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
     
-    print(f"📥 Loading SQuAD dataset...")
+    print("Loading SQuAD dataset...")
     raw = load_dataset("squad")
 
     train_raw = raw["train"].shuffle(seed=seed)
@@ -84,13 +84,12 @@ def build_squad_dataset(output_dir="data/squad", max_train=10000, max_val=2000, 
 
     ds.save_to_disk(output_dir)
     
-    print(f"\n✅ Saved SQuAD dataset to {output_dir}")
-    print(f"📊 Statistics:")
+    print(f"Saved SQuAD dataset to {output_dir}")
+    print("Statistics:")
     for split in ds:
         print(f"  {split}: {len(ds[split]):,} samples")
     
-    # Kiểm tra mẫu
-    print(f"\n📝 Sample check:")
+    print("Sample check:")
     sample = ds["train"][0]
     print(f"  Task: {sample['task']}")
     print(f"  Response: '{sample['response'][:100]}...'")

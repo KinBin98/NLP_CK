@@ -46,7 +46,6 @@ def load_model(model_name):
 
 
 def format_examples(examples, tokenizer):
-    """Format dữ liệu đúng chat template"""
     texts = []
     for p, r in zip(examples["prompt"], examples["response"]):
         messages = [
@@ -61,35 +60,30 @@ def format_examples(examples, tokenizer):
 def main(args):
     set_seed(SEED)
 
-    # Load dataset
     dataset = load_from_disk(args.dataset_dir)
     
-    # Xác định chế độ
     if args.task:
-        print(f"🎯 Single-task mode: {args.task}")
+        print(f"Single-task mode: {args.task}")
         train_ds = dataset["train"].filter(lambda ex: ex["task"] == args.task)
         mode = f"single_{args.task}"
     else:
-        print("🎯 Multi-task mode: training on all tasks")
+        print("Multi-task mode: training on all tasks")
         train_ds = dataset["train"]
         mode = "multi"
     
-    print(f"📊 Training samples: {len(train_ds):,}")
+    print(f"Training samples: {len(train_ds):,}")
     
-    # Validation
     eval_ds = None
     if "validation" in dataset:
         if args.task:
             eval_ds = dataset["validation"].filter(lambda ex: ex["task"] == args.task)
         else:
             eval_ds = dataset["validation"]
-        print(f"📊 Validation samples: {len(eval_ds):,}")
+        print(f"Validation samples: {len(eval_ds):,}")
 
-    # Load model
     model, tokenizer = load_model(args.model_name)
     bf16 = torch.cuda.is_bf16_supported()
 
-    # Format dữ liệu
     train_ds = train_ds.map(
         lambda x: format_examples(x, tokenizer),
         batched=True,
@@ -102,7 +96,6 @@ def main(args):
             remove_columns=eval_ds.column_names,
         )
 
-    # Training arguments
     training_args = TrainingArguments(
         output_dir=os.path.join(args.output_dir, mode),
         per_device_train_batch_size=PER_DEVICE_BATCH_SIZE,
@@ -134,11 +127,10 @@ def main(args):
 
     trainer.train()
     
-    # Lưu checkpoint
     ckpt_path = args.checkpoint or os.path.join(args.output_dir, f"{mode}_checkpoint.pt")
     os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
     torch.save(trainer.model.state_dict(), ckpt_path)
-    print(f"✅ Saved checkpoint to {ckpt_path}")
+    print(f"Saved checkpoint to {ckpt_path}")
 
 
 if __name__ == "__main__":
