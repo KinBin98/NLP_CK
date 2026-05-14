@@ -51,13 +51,19 @@ def predict_batch(model, tokenizer, prompts, task_type="classification", max_new
         )
         formatted_prompts.append(formatted)
     
-    # Điều chỉnh max_new_tokens theo task_type
+    # Điều chỉnh max_new_tokens và temperature theo task_type
     if task_type == "qa":
-        max_new_tokens = 50  # QA cần nhiều token hơn
+        max_new_tokens = 50
+        temperature = 0.5
+        do_sample = True
     elif task_type == "regression":
         max_new_tokens = 20
-    else:
+        temperature = 0.7
+        do_sample = True
+    else:  # classification
         max_new_tokens = 5
+        temperature = 0.1
+        do_sample = False
     
     inputs = tokenizer(
         formatted_prompts, 
@@ -71,8 +77,9 @@ def predict_batch(model, tokenizer, prompts, task_type="classification", max_new
     outputs = model.generate(
         **inputs,
         max_new_tokens=max_new_tokens,
-        temperature=0.1,
-        do_sample=False,
+        temperature=temperature,
+        do_sample=do_sample,
+        top_p=0.9 if do_sample else None,
         pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id
     )
     
@@ -99,10 +106,10 @@ def predict_batch(model, tokenizer, prompts, task_type="classification", max_new
     
     return cleaned
 
+
 def extract_answer(generated, _):
     if not generated:
         return ""
-    # Lấy số hoặc float đầu tiên
     match = re.search(r'\b\d+(?:\.\d+)?\b', generated)
     return match.group(0) if match else generated.split()[0] if generated else ""
 
@@ -154,7 +161,6 @@ def run_task(task, dataset, method, model, tokenizer, split_name):
             else:  # regression (STS-B)
                 try:
                     if gen:
-                        # Chuyển sang float và làm tròn 1 chữ số
                         value = float(gen)
                         y_pred.append(round(value, 1))
                     else:

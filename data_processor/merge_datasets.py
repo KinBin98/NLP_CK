@@ -13,12 +13,12 @@ from config import TASKS
 
 # ✅ SỬA: Đường dẫn đúng với cấu trúc thư mục mới
 TASK_FOLDERS = {
-    "sst2": "data/sst2",
-    "mnli": "data/mnli",
-    "cola": "data/cola",
-    "stsb": "data/stsb",
-    "squad": "data/squad",
-    "ag_news": "data/ag_news",
+    "sst2": "data1/data_sst2_v2",
+    "mnli": "data1/data_mnli",
+    "cola": "data1/data_cola",
+    "stsb": "data1/data_stsb",
+    "squad": "data1/data_squad",
+    "ag_news": "data1/data_ag_news",
 }
 
 

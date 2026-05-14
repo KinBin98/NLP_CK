@@ -1,0 +1,46 @@
+{
+  "builder_name": "parquet",
+  "citation": "",
+  "config_name": "plain_text",
+  "dataset_name": "squad",
+  "dataset_size": 89834388,
+  "description": "",
+  "download_size": 16278203,
+  "features": {
+    "prompt": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "response": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "task": {
+      "dtype": "string",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 106112591,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 79357058,
+      "num_examples": 87599,
+      "dataset_name": "squad"
+    },
+    "validation": {
+      "name": "validation",
+      "num_bytes": 10477330,
+      "num_examples": 10570,
+      "dataset_name": "squad"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}
