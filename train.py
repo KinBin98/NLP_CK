@@ -2,7 +2,7 @@ import argparse
 import os
 import torch
 from datasets import load_from_disk
-from transformers import TrainingArguments, set_seed, EarlyStoppingCallback, Trainer
+from transformers import TrainingArguments, set_seed, EarlyStoppingCallback, Trainer, DataCollatorForLanguageModeling
 from trl import SFTTrainer
 from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
@@ -107,13 +107,15 @@ def main(args):
         report_to="none",
         remove_unused_columns=False,  
     )
-
+    
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
     trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        tokenizer=tokenizer,
+    model=model,
+    args=training_args,
+    train_dataset=train_ds,
+    eval_dataset=eval_ds,
+    tokenizer=tokenizer,
+    data_collator=data_collator,  
     )
 
     if eval_ds and args.early_stopping_patience > 0:
