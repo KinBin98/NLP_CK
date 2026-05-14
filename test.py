@@ -8,14 +8,15 @@ from datasets import load_from_disk
 from transformers import set_seed
 from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
+from peft import PeftModel
 
-from config import DEFAULT_MODEL, SEED, TASKS
+from config import DEFAULT_MODEL, SEED, TASKS, MAX_SEQ_LENGTH
 
 
 def load_model(model_name, load_in_4bit=True):
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
-        max_seq_length=1024,
+        max_seq_length=MAX_SEQ_LENGTH,
         dtype=None,
         load_in_4bit=load_in_4bit,
     )
@@ -25,71 +26,38 @@ def load_model(model_name, load_in_4bit=True):
     return model, tokenizer
 
 
-def load_checkpoint_model(checkpoint_path, model_name):
+def load_finetuned_model(checkpoint_path, model_name):
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
-        max_seq_length=1024,
+        max_seq_length=MAX_SEQ_LENGTH,
         dtype=None,
         load_in_4bit=True,
     )
     tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
     tokenizer.padding_side = 'left'
-    
-    model = FastLanguageModel.get_peft_model(
-        model,
-        r=16,
-        lora_alpha=16,
-        lora_dropout=0.0,
-        bias="none",
-        use_gradient_checkpointing="unsloth",
-        target_modules=[
-            "q_proj", "k_proj", "v_proj", "o_proj",
-            "gate_proj", "up_proj", "down_proj",
-        ],
-    )
-    
-    if checkpoint_path:
-        state = torch.load(checkpoint_path, map_location="cpu")
-        model.load_state_dict(state, strict=False)
-        print(f"Loaded LoRA weights from {checkpoint_path}")
-    
+
+    print(f"Loading LoRA weights from: {checkpoint_path}")
+    model = PeftModel.from_pretrained(model, checkpoint_path)
     FastLanguageModel.for_inference(model)
     return model, tokenizer
 
 
-def predict_batch(model, tokenizer, prompts, task_type="classification", max_new_tokens=20):
-    formatted_prompts = []
+def predict_batch(model, tokenizer, prompts, task=None, task_type="classification"):
+    formatted = []
     for p in prompts:
         messages = [{"role": "user", "content": p.strip()}]
-        formatted = tokenizer.apply_chat_template(
-            messages, 
-            tokenize=False, 
-            add_generation_prompt=True
-        )
-        formatted_prompts.append(formatted)
-    
+        formatted.append(tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True))
+
     if task_type == "qa":
-        max_new_tokens = 50
-        temperature = 0.5
-        do_sample = True
+        max_new_tokens, temperature, do_sample = 30, 0.5, True
     elif task_type == "regression":
-        max_new_tokens = 20
-        temperature = 0.1
-        do_sample = False
+        max_new_tokens, temperature, do_sample = 5, 0.1, False
     else:
-        max_new_tokens = 5
-        temperature = 0.1
-        do_sample = False
-    
-    inputs = tokenizer(
-        formatted_prompts, 
-        return_tensors="pt", 
-        padding=True, 
-        truncation=True,
-        max_length=1024,
-        padding_side='left'
-    ).to(model.device)
-    
+        max_new_tokens, temperature, do_sample = 5, 0.1, False
+
+    inputs = tokenizer(formatted, return_tensors="pt", padding=True, truncation=True, max_length=1024, padding_side='left')
+    inputs = {k: v.to(model.device) for k, v in inputs.items()}
+
     outputs = model.generate(
         **inputs,
         max_new_tokens=max_new_tokens,
@@ -98,40 +66,42 @@ def predict_batch(model, tokenizer, prompts, task_type="classification", max_new
         top_p=0.9 if do_sample else None,
         pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id
     )
-    
+
     decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
-    
+
     cleaned = []
     for d in decoded:
         if "assistant" in d.lower():
             d = d.lower().split("assistant")[-1].strip()
-        
+
         if task_type == "classification":
-            match = re.search(r'\b[0-3]\b', d)
+            # Dynamic pattern based on task labels
+            if task and hasattr(task, 'label_map') and task.label_map:
+                valid_labels = list(task.label_map.keys())
+                pattern = r'\b(?:' + '|'.join(map(str, valid_labels)) + r')\b'
+            else:
+                pattern = r'\b[0-3]\b'  # fallback
+            match = re.search(pattern, d)
             cleaned.append(match.group(0) if match else "")
         elif task_type == "regression":
             match = re.search(r'\b\d+(?:\.\d+)?\b', d)
             cleaned.append(match.group(0) if match else "")
-        elif task_type == "qa":
-            cleaned.append(d if d else "")
-    
+        else:
+            cleaned.append(d)
     return cleaned
 
 
-def normalize_label(text):
-    if text is None:
-        return ""
-    return re.sub(r"[^a-zA-Z0-9_ ]", "", str(text)).strip().lower().replace(" ", "_")
-
-
-def _label_to_id(task, label_text):
+def label_to_id(task, label_text):
     if task.task_type != "classification" or label_text is None:
         return label_text
     try:
         return int(label_text)
     except (ValueError, TypeError):
-        reverse_map = {normalize_label(v): k for k, v in task.label_map.items()}
-        return reverse_map.get(normalize_label(str(label_text)), None)
+        if task.label_map:
+            reverse_map = {str(v).lower().replace(" ", "_"): k for k, v in task.label_map.items()}
+            key = str(label_text).strip().lower().replace(" ", "_")
+            return reverse_map.get(key, None)
+        return None
 
 
 def main(args):
@@ -142,103 +112,86 @@ def main(args):
     dataset = load_from_disk(args.dataset_dir)
 
     print(f"Loading model: {args.model_name}")
-    
     if args.method == "checkpoint" and args.checkpoint:
-        model, tokenizer = load_checkpoint_model(args.checkpoint, args.model_name)
+        model, tokenizer = load_finetuned_model(args.checkpoint, args.model_name)
     else:
         model, tokenizer = load_model(args.model_name, load_in_4bit=True)
 
     if args.split not in dataset:
         print(f"Split '{args.split}' not found")
         return
-    
+
     full_split = dataset[args.split]
     task_map = {task.name: task for task in TASKS}
-    
+
     print(f"Processing {len(full_split)} samples from {args.split} split")
-    
     if args.task:
         full_split = full_split.filter(lambda ex: ex["task"] == args.task)
         print(f"Filtered to {len(full_split)} samples for task '{args.task}'")
-    
+
     rows = []
     batch_size = 6
-    
+
     for i in range(0, len(full_split), batch_size):
-        batch_indices = list(range(i, min(i + batch_size, len(full_split))))
-        
-        batch_prompts = []
-        batch_tasks = []
-        batch_labels = []
-        batch_task_types = []
-        batch_task_objs = []
-        
-        for idx in batch_indices:
-            example = full_split[idx]
-            task_name = example["task"]
-            task = task_map.get(task_name)
-            
-            if task is None:
+        batch = full_split[i:i+batch_size]
+
+        prompts, tasks, labels, task_types, task_objs = [], [], [], [], []
+        for item in batch:
+            task = task_map.get(item["task"])
+            if not task:
                 continue
-            
-            batch_prompts.append(example["prompt"])
-            batch_tasks.append(task_name)
-            batch_labels.append(example["response"])
-            batch_task_types.append(task.task_type)
-            batch_task_objs.append(task)
-        
-        if not batch_prompts:
+            prompts.append(item["prompt"])
+            tasks.append(item["task"])
+            labels.append(item["response"])
+            task_types.append(task.task_type)
+            task_objs.append(task)
+
+        if not prompts:
             continue
-        
+
         by_type = defaultdict(list)
-        for j, task_type in enumerate(batch_task_types):
-            by_type[task_type].append(j)
-        
-        all_preds = [None] * len(batch_prompts)
-        
-        for task_type, indices in by_type.items():
-            type_prompts = [batch_prompts[j] for j in indices]
-            decoded = predict_batch(model, tokenizer, type_prompts, task_type=task_type)
-            
+        for j, tt in enumerate(task_types):
+            by_type[tt].append(j)
+
+        preds = [None] * len(prompts)
+
+        for tt, indices in by_type.items():
+            type_prompts = [prompts[j] for j in indices]
+            # Pass task object for dynamic pattern
+            sample_task = task_objs[indices[0]] if indices else None
+            decoded = predict_batch(model, tokenizer, type_prompts, task=sample_task, task_type=tt)
+
             for orig_idx, pred in zip(indices, decoded):
-                task_obj = batch_task_objs[orig_idx]
-                
-                if task_type == "classification":
-                    all_preds[orig_idx] = _label_to_id(task_obj, pred)
-                elif task_type == "qa":
-                    all_preds[orig_idx] = pred
+                task_obj = task_objs[orig_idx]
+                if tt == "classification":
+                    preds[orig_idx] = label_to_id(task_obj, pred)
+                elif tt == "qa":
+                    preds[orig_idx] = pred
                 else:
                     try:
-                        all_preds[orig_idx] = round(float(pred), 1) if pred else None
+                        preds[orig_idx] = round(float(pred), 1) if pred else None
                     except:
-                        all_preds[orig_idx] = None
-        
-        for j in range(len(batch_prompts)):
+                        preds[orig_idx] = None
+
+        for j in range(len(prompts)):
             rows.append({
-                "task": batch_tasks[j],
+                "task": tasks[j],
                 "split": args.split,
-                "label": str(batch_labels[j]),
-                "prediction": str(all_preds[j]) if all_preds[j] is not None else "",
+                "label": str(labels[j]),
+                "prediction": str(preds[j]) if preds[j] is not None else "",
                 "method": args.method,
-                "prompt": batch_prompts[j],
+                "prompt": prompts[j],
             })
-        
+
         if (i + batch_size) % 100 == 0 or i + batch_size >= len(full_split):
-            print(f"Progress: {min(i+batch_size, len(full_split))}/{len(full_split)} samples")
-    
+            print(f"Progress: {min(i+batch_size, len(full_split))}/{len(full_split)}")
+
     with open(args.output_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["task", "split", "label", "prediction", "method", "prompt"])
         writer.writeheader()
         writer.writerows(rows)
-    
-    task_counts = defaultdict(int)
-    for row in rows:
-        task_counts[row["task"]] += 1
-    
+
     print(f"Saved {len(rows)} predictions to {args.output_file}")
-    print(f"Task distribution:")
-    for task, count in sorted(task_counts.items()):
-        print(f"  {task}: {count} samples")
 
 
 if __name__ == "__main__":
