@@ -147,27 +147,29 @@ def main(args):
     
     # Duyệt theo batch, giữ nguyên thứ tự shuffle
     for i in range(0, len(full_split), batch_size):
-        batch = full_split[i:i+batch_size]
+        # Lấy batch indices
+        batch_indices = list(range(i, min(i + batch_size, len(full_split))))
         
-        # Chuẩn bị batch
-        batch_indices = []
+        # Lấy dữ liệu cho batch
         batch_prompts = []
         batch_tasks = []
         batch_labels = []
         batch_task_types = []
+        batch_task_objs = []
         
-        for idx, example in enumerate(batch):
+        for idx in batch_indices:
+            example = full_split[idx]
             task_name = example["task"]
             task = task_map.get(task_name)
             
             if task is None:
                 continue
             
-            batch_indices.append(idx)
             batch_prompts.append(example["prompt"])
             batch_tasks.append(task_name)
             batch_labels.append(example["response"])
             batch_task_types.append(task.task_type)
+            batch_task_objs.append(task)
         
         if not batch_prompts:
             continue
@@ -185,7 +187,7 @@ def main(args):
             decoded = predict_batch(model, tokenizer, type_prompts, task_type=task_type)
             
             for orig_idx, pred in zip(indices, decoded):
-                task_obj = task_map.get(batch_tasks[orig_idx])
+                task_obj = batch_task_objs[orig_idx]
                 
                 if task_type == "classification":
                     all_preds[orig_idx] = _label_to_id(task_obj, pred)
@@ -198,14 +200,14 @@ def main(args):
                         all_preds[orig_idx] = None
         
         # Lưu kết quả theo đúng thứ tự
-        for j, (prompt, task_name, label, pred) in enumerate(zip(batch_prompts, batch_tasks, batch_labels, all_preds)):
+        for j in range(len(batch_prompts)):
             rows.append({
-                "task": task_name,
+                "task": batch_tasks[j],
                 "split": args.split,
-                "label": str(label),
-                "prediction": str(pred) if pred is not None else "",
+                "label": str(batch_labels[j]),
+                "prediction": str(all_preds[j]) if all_preds[j] is not None else "",
                 "method": args.method,
-                "prompt": prompt,
+                "prompt": batch_prompts[j],
             })
         
         # Progress report
