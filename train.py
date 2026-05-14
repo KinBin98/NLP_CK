@@ -108,13 +108,12 @@ def main(args):
     )
 
     trainer = SFTTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        text_column="text",
-        max_seq_length=MAX_SEQ_LENGTH,
-        packing=False,
+    model=model,
+    train_dataset=train_ds,
+    eval_dataset=eval_ds,
+    max_seq_length=MAX_SEQ_LENGTH,
+    packing=False,
+    args=training_args,
     )
 
     if eval_ds and args.early_stopping_patience > 0:
