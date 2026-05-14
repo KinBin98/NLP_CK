@@ -1,14 +1,14 @@
-import unsloth  # Dòng đầu tiên
-from unsloth import FastLanguageModel
-from unsloth.chat_templates import get_chat_template
-
-# Sau đó mới import các thư viện khác
-import argparse  # THÊM DÒNG NÀY
+# train.py - Phiên bản ổn định cho Kaggle (không unsloth)
+import argparse
 import os
 import torch
 from datasets import load_from_disk
-from transformers import TrainingArguments, set_seed, EarlyStoppingCallback
-from trl import SFTTrainer
+from transformers import (
+    AutoModelForCausalLM, AutoTokenizer,
+    TrainingArguments, set_seed, EarlyStoppingCallback, Trainer
+)
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from bitsandbytes import BitsAndBytesConfig
 
 from config import (
     DEFAULT_MODEL, GRADIENT_ACCUMULATION_STEPS, LEARNING_RATE,
@@ -18,29 +18,44 @@ from config import (
 
 
 def load_model(model_name):
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=model_name,
-        max_seq_length=MAX_SEQ_LENGTH,
-        dtype=None,
+    # BitsAndBytes config for 4-bit quantization
+    bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
     )
-    tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
+    
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     tokenizer.padding_side = 'left'
-
-    model = FastLanguageModel.get_peft_model(
-        model,
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.add_eos_token = True
+    
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=bnb_config,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    
+    model = prepare_model_for_kbit_training(model)
+    
+    # LoRA config
+    lora_config = LoraConfig(
         r=16,
         lora_alpha=16,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         lora_dropout=0.0,
         bias="none",
-        use_gradient_checkpointing="unsloth",
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        task_type="CAUSAL_LM",
     )
+    model = get_peft_model(model, lora_config)
+    
     return model, tokenizer
 
 
-def format_examples(examples, tokenizer):
-    """Format chat template, không tokenize"""
+def format_and_tokenize(examples, tokenizer):
+    """Format chat template và tokenize"""
     texts = []
     for p, r in zip(examples["prompt"], examples["response"]):
         messages = [
@@ -49,7 +64,17 @@ def format_examples(examples, tokenizer):
         ]
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
         texts.append(text)
-    return {"text": texts}
+    
+    # Tokenize
+    tokenized = tokenizer(
+        texts, 
+        truncation=True, 
+        padding=True, 
+        max_length=MAX_SEQ_LENGTH,
+        return_tensors=None,
+    )
+    tokenized["labels"] = tokenized["input_ids"].copy()
+    return tokenized
 
 
 def main(args):
@@ -62,6 +87,7 @@ def main(args):
     print(f"📌 Early stopping patience={args.early_stopping_patience}")
     print("=" * 60)
 
+    # Load dataset
     dataset = load_from_disk(args.dataset_dir)
 
     if args.task:
@@ -80,22 +106,30 @@ def main(args):
         eval_ds = dataset["validation"].filter(lambda ex: ex["task"] == args.task) if args.task else dataset["validation"]
         print(f"Validation samples: {len(eval_ds):,}")
 
+    # Load model
     print(f"\nLoading model: {args.model_name}")
     model, tokenizer = load_model(args.model_name)
 
-    print("Formatting datasets...")
+    # Format and tokenize datasets
+    print("Formatting and tokenizing datasets...")
     train_ds = train_ds.map(
-        lambda x: format_examples(x, tokenizer), 
+        lambda x: format_and_tokenize(x, tokenizer), 
         batched=True, 
         remove_columns=train_ds.column_names
     )
     if eval_ds:
         eval_ds = eval_ds.map(
-            lambda x: format_examples(x, tokenizer), 
+            lambda x: format_and_tokenize(x, tokenizer), 
             batched=True, 
             remove_columns=eval_ds.column_names
         )
 
+    # Set dataset format for PyTorch
+    train_ds.set_format(type='torch', columns=['input_ids', 'attention_mask', 'labels'])
+    if eval_ds:
+        eval_ds.set_format(type='torch', columns=['input_ids', 'attention_mask', 'labels'])
+
+    # Training arguments
     bf16 = torch.cuda.is_bf16_supported()
     training_args = TrainingArguments(
         output_dir=os.path.join(args.output_dir, mode),
@@ -117,17 +151,16 @@ def main(args):
         greater_is_better=False,
         optim="adamw_8bit",
         report_to="none",
+        remove_unused_columns=False,
     )
     
-    # Dùng SFTTrainer thay vì Trainer
-    trainer = SFTTrainer(
+    # Trainer
+    trainer = Trainer(
         model=model,
-        tokenizer=tokenizer,
+        args=training_args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
-        dataset_text_field="text",
-        max_seq_length=MAX_SEQ_LENGTH,
-        args=training_args,
+        tokenizer=tokenizer,
     )
 
     if eval_ds and args.early_stopping_patience > 0:
@@ -136,6 +169,7 @@ def main(args):
     print("\nStarting training...")
     trainer.train()
 
+    # Save model
     output_dir = os.path.join(args.output_dir, f"{mode}_final")
     os.makedirs(output_dir, exist_ok=True)
     trainer.model.save_pretrained(output_dir)
