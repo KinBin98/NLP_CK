@@ -1,4 +1,4 @@
-# train.py - Phiên bản tối giản với epochs + packing + validation metrics
+# train.py - Phiên bản tối giản (không save_steps)
 import argparse
 import os
 import torch
@@ -6,11 +6,11 @@ import numpy as np
 from datasets import load_from_disk
 from transformers import (
     AutoModelForCausalLM, AutoTokenizer,
-    TrainingArguments, set_seed, EarlyStoppingCallback, Trainer,
+    TrainingArguments, set_seed, Trainer,
     BitsAndBytesConfig, DataCollatorForLanguageModeling
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from sklearn.metrics import accuracy_score, matthews_corrcoef, mean_squared_error
+from sklearn.metrics import accuracy_score, matthews_corrcoef
 from scipy.stats import pearsonr
 
 from config import DEFAULT_MODEL, OUTPUT_DIR, SEED, TASKS
@@ -88,7 +88,6 @@ def format_and_tokenize(examples, tokenizer, max_seq_length):
 
 
 def get_metric_fn(task_name):
-    """Trả về hàm tính metric chính cho task"""
     task = next((t for t in TASKS if t.name == task_name), None)
     if not task:
         return None
@@ -131,7 +130,6 @@ def main(args):
     print(f"📌 Num epochs: {args.num_epochs}")
     print(f"📌 Learning rate: {args.learning_rate}")
     print(f"📌 Warmup ratio: {args.warmup_ratio}")
-    print(f"📌 Packing: {args.packing}")
     print("=" * 60)
 
     print(f"\n📂 Loading dataset from {args.dataset_dir}")
@@ -181,26 +179,17 @@ def main(args):
         fp16=not bf16,
         bf16=bf16,
         logging_steps=args.logging_steps,
-        save_steps=args.save_steps,
-        save_total_limit=2,
+        save_strategy="no",  # ← KHÔNG LƯU CHECKPOINT
         eval_strategy="epoch" if eval_ds else "no",
         gradient_checkpointing=args.gradient_checkpointing,
-        load_best_model_at_end=bool(eval_ds),
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
+        load_best_model_at_end=False,
         optim="adamw_8bit",
         report_to="none",
         remove_unused_columns=False,
     )
     
-    if args.packing:
-        print("📦 Using packing mode")
-        data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-    else:
-        from transformers import DataCollatorWithPadding
-        data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
     
-    # Thêm compute_metrics cho validation (chỉ khi single-task)
     compute_metrics_fn = get_metric_fn(args.task) if args.task and eval_ds else None
     
     trainer = Trainer(
@@ -242,10 +231,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_epochs", type=int, default=3)
     parser.add_argument("--warmup_ratio", type=float, default=0.1)
     
-    parser.add_argument("--packing", action="store_true", default=True)
-    
     parser.add_argument("--logging_steps", type=int, default=10)
-    parser.add_argument("--save_steps", type=int, default=250)
     
     args = parser.parse_args()
     main(args)
