@@ -1,4 +1,4 @@
-# train.py - Phiên bản ổn định với Packing
+# train.py - Phiên bản ổn định cuối cùng với Packing
 import argparse
 import os
 import torch
@@ -165,16 +165,16 @@ def main(args):
 
         # Packing
         packing=True,
-        max_length=args.max_seq_length,           # Quan trọng: max_length
+        max_length=args.max_seq_length,
         dataset_text_field="text",
         dataset_kwargs={"skip_prepare_dataset": True},
         dataloader_drop_last=True,
     )
 
-    # Trainer (tắt compute_metrics tạm thời vì conflict với packing)
+    # Trainer
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,          # hoặc processing_class=tokenizer ở version rất mới
+        processing_class=tokenizer,                    # ← ĐÃ SỬA: tokenizer → processing_class
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         args=sft_config,
@@ -202,7 +202,7 @@ if __name__ == "__main__":
     parser.add_argument("--task", type=str, default=None)
     parser.add_argument("--output_dir", type=str, default=OUTPUT_DIR)
     parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL)
-    parser.add_argument("--max_seq_length", type=int, default=1024)   # Tăng lên khi packing
+    parser.add_argument("--max_seq_length", type=int, default=1024)
     parser.add_argument("--batch_size", type=int, default=2)
     parser.add_argument("--gradient_accumulation", type=int, default=8)
     parser.add_argument("--gradient_checkpointing", action="store_true", default=True)
