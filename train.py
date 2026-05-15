@@ -7,7 +7,7 @@ from datasets import load_from_disk
 from transformers import (
     AutoModelForCausalLM, AutoTokenizer,
     TrainingArguments, set_seed, Trainer,
-    BitsAndBytesConfig, DataCollatorForLanguageModeling
+    BitsAndBytesConfig, DataCollatorWithPadding
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from sklearn.metrics import accuracy_score, matthews_corrcoef
@@ -188,7 +188,7 @@ def main(args):
         remove_unused_columns=False,
     )
     
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    data_collator = DataCollatorWithPadding(tokenizer=tokenizer, mlm=False)
     
     compute_metrics_fn = get_metric_fn(args.task) if args.task and eval_ds else None
     
