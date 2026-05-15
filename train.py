@@ -1,4 +1,4 @@
-# train.py - Phiên bản tối ưu với Packing
+# train.py - Phiên bản ổn định với Packing
 import argparse
 import os
 import torch
@@ -54,7 +54,6 @@ def load_model(model_name, max_seq_length, gradient_checkpointing):
 
 
 def format_prompt(examples):
-    """Format thành chat template cho SFTTrainer"""
     texts = []
     for p, r in zip(examples["prompt"], examples["response"]):
         messages = [
@@ -62,9 +61,7 @@ def format_prompt(examples):
             {"role": "assistant", "content": r}
         ]
         text = tokenizer.apply_chat_template(
-            messages, 
-            tokenize=False, 
-            add_generation_prompt=False
+            messages, tokenize=False, add_generation_prompt=False
         )
         texts.append(text)
     return {"text": texts}
@@ -106,8 +103,8 @@ def main(args):
     print("🚀 STARTING TRAINING WITH PACKING")
     print("=" * 70)
     print(f"📌 Task          : {args.task if args.task else 'multi-task'}")
-    print(f"📌 Max seq length: {args.max_seq_length}")
-    print(f"📌 Batch size    : {args.batch_size} x {args.gradient_accumulation} = {args.batch_size * args.gradient_accumulation}")
+    print(f"📌 Max length    : {args.max_seq_length}")
+    print(f"📌 Batch size    : {args.batch_size} x {args.gradient_accumulation}")
     print(f"📌 Epochs        : {args.num_epochs}")
     print(f"📌 Learning rate : {args.learning_rate}")
     print(f"📌 Packing       : ENABLED")
@@ -137,20 +134,19 @@ def main(args):
 
     # Load model
     print("\n🔄 Loading model...")
-    global tokenizer  # Để format_prompt dùng được
+    global tokenizer
     model, tokenizer = load_model(args.model_name, args.max_seq_length, args.gradient_checkpointing)
     model.print_trainable_parameters()
 
     # Format dataset
-    print("📝 Formatting prompts with chat template...")
+    print("📝 Formatting prompts...")
     train_ds = train_ds.map(format_prompt, batched=True, remove_columns=train_ds.column_names)
-
     if eval_ds:
         eval_ds = eval_ds.map(format_prompt, batched=True, remove_columns=eval_ds.column_names)
 
     bf16 = torch.cuda.is_bf16_supported()
 
-    # SFTConfig với Packing - ĐÃ SỬA
+    # SFTConfig
     sft_config = SFTConfig(
         output_dir=os.path.join(args.output_dir, mode),
         per_device_train_batch_size=args.batch_size,
@@ -162,33 +158,33 @@ def main(args):
         bf16=bf16,
         logging_steps=args.logging_steps,
         save_strategy="no",
-        eval_strategy="epoch" if eval_ds else "no",           # ← Đã sửa
+        eval_strategy="epoch" if eval_ds else "no",
         gradient_checkpointing=args.gradient_checkpointing,
         optim="adamw_8bit",
         report_to="none",
-        
-        # === PACKING ===
+
+        # Packing
         packing=True,
-        max_length=args.max_seq_length,
+        max_length=args.max_seq_length,           # Quan trọng: max_length
         dataset_text_field="text",
         dataset_kwargs={"skip_prepare_dataset": True},
         dataloader_drop_last=True,
     )
 
-    # Trainer
+    # Trainer (tắt compute_metrics tạm thời vì conflict với packing)
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        tokenizer=tokenizer,          # hoặc processing_class=tokenizer ở version rất mới
         train_dataset=train_ds,
         eval_dataset=eval_ds,
         args=sft_config,
-        compute_metrics=get_metric_fn(args.task) if args.task and eval_ds else None,
+        # compute_metrics=get_metric_fn(args.task) if args.task and eval_ds else None,  # Tắt tạm
     )
 
-    print("\n🎯 Starting training with Packing...")
+    print("\n🎯 Starting training...")
     trainer.train()
 
-    # Save final model
+    # Save model
     output_dir = os.path.join(args.output_dir, f"{mode}_final")
     os.makedirs(output_dir, exist_ok=True)
     trainer.model.save_pretrained(output_dir)
@@ -196,19 +192,19 @@ def main(args):
 
     print(f"\n✅ Model saved to: {output_dir}")
     print("=" * 70)
-    print("✅ TRAINING COMPLETED SUCCESSFULLY")
+    print("✅ TRAINING COMPLETED")
     print("=" * 70)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train Qwen with LoRA + Packing")
+    parser = argparse.ArgumentParser(description="Train with SFT + Packing")
     parser.add_argument("--dataset_dir", type=str, default="data/merged")
     parser.add_argument("--task", type=str, default=None)
     parser.add_argument("--output_dir", type=str, default=OUTPUT_DIR)
     parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL)
-    parser.add_argument("--max_seq_length", type=int, default=2048)   # Nên tăng lên khi có packing
-    parser.add_argument("--batch_size", type=int, default=2)          # Giảm batch size vì packing
-    parser.add_argument("--gradient_accumulation", type=int, default=4)
+    parser.add_argument("--max_seq_length", type=int, default=1024)   # Tăng lên khi packing
+    parser.add_argument("--batch_size", type=int, default=2)
+    parser.add_argument("--gradient_accumulation", type=int, default=8)
     parser.add_argument("--gradient_checkpointing", action="store_true", default=True)
     parser.add_argument("--learning_rate", type=float, default=2e-4)
     parser.add_argument("--num_epochs", type=int, default=3)
