@@ -1,4 +1,4 @@
-# train.py - Phiên bản tối giản (không save_steps)
+# train.py - Phiên bản có PACKING
 import argparse
 import os
 import torch
@@ -7,9 +7,8 @@ from datasets import load_from_disk
 from transformers import (
     AutoModelForCausalLM, AutoTokenizer,
     TrainingArguments, set_seed, Trainer,
-    BitsAndBytesConfig, DataCollatorForLanguageModeling
+    BitsAndBytesConfig, DataCollatorForSeq2Seq
 )
-from transformers import DataCollatorForSeq2Seq
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from sklearn.metrics import accuracy_score, matthews_corrcoef
 from scipy.stats import pearsonr
@@ -54,38 +53,14 @@ def load_model(model_name, max_seq_length, gradient_checkpointing):
     return model, tokenizer
 
 
-def format_and_tokenize(examples, tokenizer, max_seq_length):
-    all_input_ids = []
-    all_attention_masks = []
-    all_labels = []
-    
+# ✅ SỬA: CHỈ FORMAT, KHÔNG TOKENIZE (quan trọng cho packing)
+def format_examples(examples, tokenizer):
+    texts = []
     for p, r in zip(examples["prompt"], examples["response"]):
         messages = [{"role": "user", "content": p}, {"role": "assistant", "content": r}]
-        full_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
-        
-        prompt_messages = [{"role": "user", "content": p}]
-        prompt_text = tokenizer.apply_chat_template(prompt_messages, tokenize=False, add_generation_prompt=True)
-        
-        full_tokenized = tokenizer(full_text, truncation=True, padding=False, max_length=max_seq_length)
-        prompt_tokenized = tokenizer(prompt_text, truncation=True, padding=False, max_length=max_seq_length)
-        
-        prompt_len = len(prompt_tokenized["input_ids"])
-        
-        if prompt_len >= len(full_tokenized["input_ids"]):
-            continue
-        
-        labels = full_tokenized["input_ids"].copy()
-        labels[:prompt_len] = [-100] * prompt_len
-        
-        all_input_ids.append(full_tokenized["input_ids"])
-        all_attention_masks.append(full_tokenized["attention_mask"])
-        all_labels.append(labels)
-    
-    return {
-        "input_ids": all_input_ids,
-        "attention_mask": all_attention_masks,
-        "labels": all_labels,
-    }
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+        texts.append(text)
+    return {"text": texts}
 
 
 def get_metric_fn(task_name):
@@ -121,7 +96,7 @@ def main(args):
     set_seed(SEED)
 
     print("=" * 60)
-    print("🚀 STARTING TRAINING")
+    print("🚀 STARTING TRAINING (WITH PACKING)")
     print("=" * 60)
     print(f"📌 Task: {args.task if args.task else 'multi-task'}")
     print(f"📌 Max seq length: {args.max_seq_length}")
@@ -156,15 +131,16 @@ def main(args):
     model, tokenizer = load_model(args.model_name, args.max_seq_length, args.gradient_checkpointing)
     model.print_trainable_parameters()
 
-    print("📝 Formatting and tokenizing datasets...")
+    # ✅ SỬA: CHỈ FORMAT, KHÔNG TOKENIZE
+    print("📝 Formatting datasets...")
     train_ds = train_ds.map(
-        lambda x: format_and_tokenize(x, tokenizer, args.max_seq_length), 
+        lambda x: format_examples(x, tokenizer), 
         batched=True, 
         remove_columns=train_ds.column_names
     )
     if eval_ds:
         eval_ds = eval_ds.map(
-            lambda x: format_and_tokenize(x, tokenizer, args.max_seq_length), 
+            lambda x: format_examples(x, tokenizer), 
             batched=True, 
             remove_columns=eval_ds.column_names
         )
@@ -180,7 +156,7 @@ def main(args):
         fp16=not bf16,
         bf16=bf16,
         logging_steps=args.logging_steps,
-        save_strategy="no",  # ← KHÔNG LƯU CHECKPOINT
+        save_strategy="no",
         eval_strategy="epoch" if eval_ds else "no",
         gradient_checkpointing=args.gradient_checkpointing,
         load_best_model_at_end=False,
@@ -189,8 +165,7 @@ def main(args):
         remove_unused_columns=False,
     )
     
-    from transformers import DataCollatorForSeq2Seq
-
+    # DataCollatorForSeq2Seq sẽ tự động tokenize và PACK
     data_collator = DataCollatorForSeq2Seq(
         tokenizer=tokenizer,
         model=model,
