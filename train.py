@@ -9,6 +9,7 @@ from transformers import (
     TrainingArguments, set_seed, Trainer,
     BitsAndBytesConfig, DataCollatorForLanguageModeling
 )
+from transformers import DataCollatorForSeq2Seq
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from sklearn.metrics import accuracy_score, matthews_corrcoef
 from scipy.stats import pearsonr
@@ -188,8 +189,15 @@ def main(args):
         remove_unused_columns=False,
     )
     
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-    
+    from transformers import DataCollatorForSeq2Seq
+
+    data_collator = DataCollatorForSeq2Seq(
+        tokenizer=tokenizer,
+        model=model,
+        padding=True,
+        label_pad_token_id=-100,
+    )
+        
     compute_metrics_fn = get_metric_fn(args.task) if args.task and eval_ds else None
     
     trainer = Trainer(
