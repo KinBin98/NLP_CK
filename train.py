@@ -188,7 +188,7 @@ def main(args):
         remove_unused_columns=False,
     )
     
-    data_collator = DataCollatorWithPadding(tokenizer=tokenizer, mlm=False)
+    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
     
     compute_metrics_fn = get_metric_fn(args.task) if args.task and eval_ds else None
     
