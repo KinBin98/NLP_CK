@@ -31,11 +31,7 @@ TASKS = [
         dataset="glue",
         text_fields=["premise", "hypothesis"],
         label_field="label",
-        label_map={
-            0: "entailment",
-            1: "neutral",
-            2: "contradiction"
-        },
+        label_map={0: "entailment", 1: "neutral", 2: "contradiction"},
         task_type="classification",
         metric="accuracy",
     ),
@@ -45,10 +41,7 @@ TASKS = [
         dataset="gokuls/glue_augmented_cola",
         text_fields=["sentence"],
         label_field="label",
-        label_map={
-            0: "unacceptable",
-            1: "acceptable"
-        },
+        label_map={0: "unacceptable", 1: "acceptable"},
         task_type="classification",
         metric="mcc",
     ),
@@ -78,12 +71,7 @@ TASKS = [
         dataset="ag_news",
         text_fields=["text"],
         label_field="label",
-        label_map={
-            0: "World",
-            1: "Sports",
-            2: "Business",
-            3: "Sci/Tech"
-        },
+        label_map={0: "World", 1: "Sports", 2: "Business", 3: "Sci/Tech"},
         task_type="classification",
         metric="accuracy",
     ),
@@ -91,15 +79,14 @@ TASKS = [
 
 DEFAULT_MODEL = "unsloth/Qwen3-4B-Instruct-2507-unsloth-bnb-4bit"
 
-MAX_SEQ_LENGTH = 1024
+MAX_SEQ_LENGTH = 512
 OUTPUT_DIR = "outputs/checkpoints"
 RESULTS_CSV = "outputs/results/results.csv"
 SEED = 42
 
 LEARNING_RATE = 2e-4
-NUM_TRAIN_EPOCHS = 1
-PER_DEVICE_BATCH_SIZE = 2
-GRADIENT_ACCUMULATION_STEPS = 4
-MAX_STEPS = 800
-WARMUP_STEPS = 50
+NUM_TRAIN_EPOCHS = 3
+PER_DEVICE_BATCH_SIZE = 4
+GRADIENT_ACCUMULATION_STEPS = 2
+MAX_STEPS = None
 WARMUP_RATIO = 0.1
