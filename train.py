@@ -169,7 +169,7 @@ def main(args):
         
         # === PACKING ===
         packing=True,
-        max_seq_length=args.max_seq_length,
+        max_length=args.max_seq_length,
         dataset_text_field="text",
         dataset_kwargs={"skip_prepare_dataset": True},
         dataloader_drop_last=True,
