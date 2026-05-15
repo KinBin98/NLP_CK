@@ -1,4 +1,4 @@
-# train.py - Phiên bản đầy đủ với các argument tùy chỉnh
+# train.py - Phiên bản hoàn chỉnh
 import argparse
 import os
 import torch
@@ -23,9 +23,8 @@ def load_model(model_name, max_seq_length, gradient_checkpointing):
     )
     
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    tokenizer.padding_side = 'left'
+    tokenizer.padding_side = "right"  # ✅ SỬA: right padding cho training
     tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.add_eos_token = True
     
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
@@ -35,6 +34,9 @@ def load_model(model_name, max_seq_length, gradient_checkpointing):
     )
     
     model = prepare_model_for_kbit_training(model)
+    
+    if gradient_checkpointing:
+        model.config.use_cache = False
     
     # LoRA config
     lora_config = LoraConfig(
@@ -51,26 +53,62 @@ def load_model(model_name, max_seq_length, gradient_checkpointing):
 
 
 def format_and_tokenize(examples, tokenizer, max_seq_length):
-    """Format chat template và tokenize"""
-    texts = []
+    """Format chat template và tokenize với mask prompt"""
+    all_input_ids = []
+    all_attention_masks = []
+    all_labels = []
+    
     for p, r in zip(examples["prompt"], examples["response"]):
+        # Tạo full conversation (user + assistant)
         messages = [
             {"role": "user", "content": p},
             {"role": "assistant", "content": r}
         ]
-        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
-        texts.append(text)
+        full_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+        
+        # Tạo prompt (chỉ user) để biết độ dài
+        prompt_messages = [{"role": "user", "content": p}]
+        prompt_text = tokenizer.apply_chat_template(prompt_messages, tokenize=False, add_generation_prompt=True)
+        
+        # Tokenize
+        full_tokenized = tokenizer(full_text, truncation=True, padding=False, max_length=max_seq_length)
+        prompt_tokenized = tokenizer(prompt_text, truncation=True, padding=False, max_length=max_seq_length)
+        
+        prompt_len = len(prompt_tokenized["input_ids"])
+        
+        # ✅ SKIP sample bị truncate mất response
+        if prompt_len >= len(full_tokenized["input_ids"]):
+            continue
+        
+        # Mask prompt (set labels = -100)
+        labels = full_tokenized["input_ids"].copy()
+        labels[:prompt_len] = [-100] * prompt_len
+        
+        all_input_ids.append(full_tokenized["input_ids"])
+        all_attention_masks.append(full_tokenized["attention_mask"])
+        all_labels.append(labels)
     
-    # Tokenize
-    tokenized = tokenizer(
-        texts, 
-        truncation=True, 
-        padding=True, 
-        max_length=max_seq_length,
-        return_tensors=None,
-    )
-    tokenized["labels"] = tokenized["input_ids"].copy()
-    return tokenized
+    # Padding cho batch
+    if len(all_input_ids) == 0:
+        return {"input_ids": [], "attention_mask": [], "labels": []}
+    
+    max_len = max(len(ids) for ids in all_input_ids)
+    
+    padded_input_ids = []
+    padded_attention_masks = []
+    padded_labels = []
+    
+    for i in range(len(all_input_ids)):
+        pad_len = max_len - len(all_input_ids[i])
+        padded_input_ids.append(all_input_ids[i] + [tokenizer.pad_token_id] * pad_len)
+        padded_attention_masks.append(all_attention_masks[i] + [0] * pad_len)
+        padded_labels.append(all_labels[i] + [-100] * pad_len)
+    
+    return {
+        "input_ids": padded_input_ids,
+        "attention_mask": padded_attention_masks,
+        "labels": padded_labels,
+    }
 
 
 def main(args):
@@ -115,6 +153,9 @@ def main(args):
     # Load model
     print(f"\n🔄 Loading model...")
     model, tokenizer = load_model(args.model_name, args.max_seq_length, args.gradient_checkpointing)
+    
+    # ✅ In số trainable parameters
+    model.print_trainable_parameters()
 
     # Format and tokenize datasets
     print("📝 Formatting and tokenizing datasets...")
@@ -198,13 +239,13 @@ if __name__ == "__main__":
     parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL,
                         help="Base model name")
     
-    # Tốc độ và VRAM (quan trọng nhất)
+    # Tốc độ và VRAM
     parser.add_argument("--max_seq_length", type=int, default=512,
                         help="Max sequence length (smaller = faster, 256-1024)")
     parser.add_argument("--batch_size", type=int, default=4,
                         help="Per device batch size (larger = faster but more VRAM)")
     parser.add_argument("--gradient_accumulation", type=int, default=2,
-                        help="Gradient accumulation steps (effective batch = batch_size * this)")
+                        help="Gradient accumulation steps")
     parser.add_argument("--gradient_checkpointing", action="store_true", default=False,
                         help="Enable gradient checkpointing (slower but less VRAM)")
     
@@ -212,7 +253,7 @@ if __name__ == "__main__":
     parser.add_argument("--learning_rate", type=float, default=2e-4,
                         help="Learning rate")
     parser.add_argument("--max_steps", type=int, default=625,
-                        help="Max training steps (625 for 1 epoch with effective batch 16)")
+                        help="Max training steps")
     parser.add_argument("--warmup_steps", type=int, default=50,
                         help="Warmup steps")
     parser.add_argument("--early_stopping_patience", type=int, default=3,

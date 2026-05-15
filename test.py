@@ -21,7 +21,7 @@ def load_model(model_name, load_in_4bit=True):
         load_in_4bit=load_in_4bit,
     )
     tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
-    tokenizer.padding_side = 'left'
+    tokenizer.padding_side = "right"
     FastLanguageModel.for_inference(model)
     return model, tokenizer
 
@@ -36,7 +36,7 @@ def load_finetuned_model(checkpoint_path, model_name):
         load_in_4bit=True,
     )
     tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
-    tokenizer.padding_side = 'left'
+    tokenizer.padding_side = "right"
 
     print(f"📁 Loading LoRA weights from: {checkpoint_path}")
     model = PeftModel.from_pretrained(model, checkpoint_path)
