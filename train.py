@@ -10,7 +10,6 @@ from transformers import (
     BitsAndBytesConfig
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-from sklearn.metrics import accuracy_score, matthews_corrcoef
 from scipy.stats import pearsonr
 from unsloth.chat_templates import get_chat_template  # ← THÊM IMPORT NÀY
 
@@ -44,8 +43,8 @@ def load_model(model_name, max_seq_length, gradient_checkpointing):
         model.config.use_cache = False
     
     lora_config = LoraConfig(
-        r=32,  # Tăng lên 32
-        lora_alpha=64,  # Tăng lên 64
+        r=16,  # Tăng lên 32
+        lora_alpha=32,  # Tăng lên 64
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
         lora_dropout=0.05,  # Giảm dropout
         bias="none",
@@ -105,33 +104,6 @@ def format_and_tokenize(examples, tokenizer, max_seq_length):
     }
 
 
-def get_metric_fn(task_name):
-    task = next((t for t in TASKS if t.name == task_name), None)
-    if not task:
-        return None
-    
-    def compute_metrics(eval_pred):
-        predictions, labels = eval_pred
-        predictions = np.argmax(predictions, axis=-1)
-        mask = labels != -100
-        predictions = predictions[mask]
-        labels = labels[mask]
-        
-        if len(predictions) == 0:
-            return {task.metric: 0.0}
-        
-        if task.metric == "accuracy":
-            value = accuracy_score(labels, predictions)
-        elif task.metric == "mcc":
-            value = matthews_corrcoef(labels, predictions)
-        elif task.metric == "pearson":
-            value = pearsonr(labels.astype(float), predictions.astype(float))[0] if len(labels) > 1 else 0.0
-        else:
-            value = accuracy_score(labels, predictions)
-        
-        return {task.metric: value}
-    
-    return compute_metrics
 
 
 def main(args):
@@ -195,8 +167,14 @@ def main(args):
         learning_rate=args.learning_rate,
         fp16=True,
         logging_steps=args.logging_steps,
+
         save_strategy="epoch",
-        eval_strategy="epoch" if eval_ds and len(eval_ds) > 0 else "no",
+        eval_strategy="epoch",
+
+        load_best_model_at_end=True,   # ← thêm dòng này
+        metric_for_best_model="eval_loss",  # ← thêm
+        greater_is_better=False,       # ← thêm
+
         gradient_checkpointing=args.gradient_checkpointing,
         optim="adamw_8bit",
         report_to="none",
@@ -239,13 +217,13 @@ if __name__ == "__main__":
     parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL)
     
     # ⚠️ QUAN TRỌNG: Match với test.py
-    parser.add_argument("--max_seq_length", type=int, default=1024)  # 1024 như test.py
-    parser.add_argument("--batch_size", type=int, default=2)
-    parser.add_argument("--gradient_accumulation", type=int, default=4)
+    parser.add_argument("--max_seq_length", type=int, default=256)  # 1024 như test.py
+    parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument("--gradient_accumulation", type=int, default=2)
     parser.add_argument("--gradient_checkpointing", action="store_true", default=True)
     
-    parser.add_argument("--learning_rate", type=float, default=1e-3)  # Cao hơn
-    parser.add_argument("--num_epochs", type=int, default=20)  # Nhiều epochs hơn
+    parser.add_argument("--learning_rate", type=float, default=2e-4)  # Cao hơn
+    parser.add_argument("--num_epochs", type=int, default=5)  # Nhiều epochs hơn
     parser.add_argument("--warmup_ratio", type=float, default=0.03)
     parser.add_argument("--logging_steps", type=int, default=10)
     
