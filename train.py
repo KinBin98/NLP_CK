@@ -150,7 +150,7 @@ def main(args):
 
     bf16 = torch.cuda.is_bf16_supported()
 
-    # SFTConfig với Packing
+    # SFTConfig với Packing - ĐÃ SỬA
     sft_config = SFTConfig(
         output_dir=os.path.join(args.output_dir, mode),
         per_device_train_batch_size=args.batch_size,
@@ -162,19 +162,17 @@ def main(args):
         bf16=bf16,
         logging_steps=args.logging_steps,
         save_strategy="no",
-        evaluation_strategy="epoch" if eval_ds else "no",
+        eval_strategy="epoch" if eval_ds else "no",           # ← Đã sửa
         gradient_checkpointing=args.gradient_checkpointing,
         optim="adamw_8bit",
         report_to="none",
         
-        # === PACKING CONFIG ===
+        # === PACKING ===
         packing=True,
         max_seq_length=args.max_seq_length,
         dataset_text_field="text",
-        
-        # Tối ưu packing
-        dataloader_drop_last=True,
         dataset_kwargs={"skip_prepare_dataset": True},
+        dataloader_drop_last=True,
     )
 
     # Trainer
