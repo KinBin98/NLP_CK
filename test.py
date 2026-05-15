@@ -1,3 +1,4 @@
+# test.py - FIXED để giống hệt baseline (chỉ thêm PeftModel đúng cách)
 import argparse
 import csv
 import os
@@ -8,7 +9,7 @@ from datasets import load_from_disk
 from transformers import set_seed
 from unsloth import FastLanguageModel
 from unsloth.chat_templates import get_chat_template
-from peft import PeftModel  # THÊM IMPORT
+from peft import PeftModel
 
 from config import DEFAULT_MODEL, SEED, TASKS
 
@@ -21,13 +22,13 @@ def load_model(model_name, load_in_4bit=True):
         load_in_4bit=load_in_4bit,
     )
     tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
-    tokenizer.padding_side = "right"
+    tokenizer.padding_side = 'left'  # ← GIỐNG BASELINE
     FastLanguageModel.for_inference(model)
     return model, tokenizer
 
 
 def load_finetuned_model(checkpoint_path, model_name):
-    """Load model đã fine-tune từ thư mục (saved by trainer.model.save_pretrained)"""
+    """Load model đã fine-tune - GIỐNG CÁCH BASELINE LOAD"""
     # Load base model
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_name,
@@ -36,10 +37,14 @@ def load_finetuned_model(checkpoint_path, model_name):
         load_in_4bit=True,
     )
     tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
-    tokenizer.padding_side = "right"
-
+    tokenizer.padding_side = 'left'  # ← GIỐNG BASELINE
+    
     print(f"📁 Loading LoRA weights from: {checkpoint_path}")
     model = PeftModel.from_pretrained(model, checkpoint_path)
+    
+    # Merge LoRA weights để inference nhanh hơn (optional)
+    # model = model.merge_and_unload()
+    
     FastLanguageModel.for_inference(model)
     return model, tokenizer
 
@@ -74,7 +79,7 @@ def predict_batch(model, tokenizer, prompts, task_type="classification", max_new
         padding=True, 
         truncation=True,
         max_length=1024,
-        padding_side='left'
+        padding_side='left'  # ← GIỐNG BASELINE
     ).to(model.device)
     
     outputs = model.generate(
@@ -130,9 +135,8 @@ def main(args):
 
     print(f"\n🚀 Loading model: {args.model_name}")
     
-    # ✅ FIX: Load đúng model dựa trên method
+    # Load đúng model dựa trên method
     if args.method == "checkpoint" and args.checkpoint:
-        # Kiểm tra checkpoint tồn tại
         if not os.path.exists(args.checkpoint):
             print(f"⚠️ Checkpoint not found: {args.checkpoint}")
             print(f"   Falling back to baseline model")
@@ -151,7 +155,6 @@ def main(args):
     
     print(f"\n📊 Processing {len(full_split)} samples from {args.split} split")
     
-    # Lọc theo task nếu có
     if args.task:
         full_split = full_split.filter(lambda ex: ex["task"] == args.task)
         print(f"  Filtered to {len(full_split)} samples for task '{args.task}'")
@@ -159,12 +162,9 @@ def main(args):
     rows = []
     batch_size = 6
     
-    # Duyệt theo batch, giữ nguyên thứ tự shuffle
     for i in range(0, len(full_split), batch_size):
-        # Lấy batch indices
         batch_indices = list(range(i, min(i + batch_size, len(full_split))))
         
-        # Lấy dữ liệu cho batch
         batch_prompts = []
         batch_tasks = []
         batch_labels = []
@@ -188,12 +188,10 @@ def main(args):
         if not batch_prompts:
             continue
         
-        # Nhóm theo task_type trong batch (vì có thể khác nhau)
         by_type = defaultdict(list)
         for j, task_type in enumerate(batch_task_types):
             by_type[task_type].append(j)
         
-        # Dự đoán cho từng loại task_type
         all_preds = [None] * len(batch_prompts)
         
         for task_type, indices in by_type.items():
@@ -207,13 +205,12 @@ def main(args):
                     all_preds[orig_idx] = _label_to_id(task_obj, pred)
                 elif task_type == "qa":
                     all_preds[orig_idx] = pred
-                else:  # regression
+                else:
                     try:
                         all_preds[orig_idx] = round(float(pred), 1) if pred else None
                     except:
                         all_preds[orig_idx] = None
         
-        # Lưu kết quả theo đúng thứ tự
         for j in range(len(batch_prompts)):
             rows.append({
                 "task": batch_tasks[j],
@@ -224,17 +221,14 @@ def main(args):
                 "prompt": batch_prompts[j],
             })
         
-        # Progress report
         if (i + batch_size) % 100 == 0 or i + batch_size >= len(full_split):
             print(f"  Progress: {min(i+batch_size, len(full_split))}/{len(full_split)} samples")
     
-    # Ghi kết quả
     with open(args.output_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["task", "split", "label", "prediction", "method", "prompt"])
         writer.writeheader()
         writer.writerows(rows)
     
-    # Thống kê
     task_counts = defaultdict(int)
     for row in rows:
         task_counts[row["task"]] += 1
@@ -249,7 +243,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--method", type=str, choices=["checkpoint", "baseline"], required=True)
     parser.add_argument("--task", type=str, default=None)
-    parser.add_argument("--split", type=str, default="test")  # Mặc định test
+    parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL)
     parser.add_argument("--dataset_dir", type=str, default="data/merged")
