@@ -7,12 +7,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from config import TASKS
 
 TASK_FOLDERS = {
-    "sst2": "data/data_sst2_v2",
-    "mnli": "data/data_mnli",
     "cola": "data/data_cola",
     "stsb": "data/data_stsb",
     "squad": "data/data_squad",
-    "ag_news": "data/data_ag_news",
 }
 
 

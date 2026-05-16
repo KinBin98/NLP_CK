@@ -1,0 +1,56 @@
+{
+  "builder_name": "json",
+  "citation": "",
+  "config_name": "default",
+  "dataset_name": "pos_tagging",
+  "dataset_size": 5422174,
+  "description": "",
+  "download_checksums": {
+    "hf://datasets/batterydata/pos_tagging@4cae50882a24a955155db7d170b571e93ab8102f/train.json": {
+      "num_bytes": 5054351,
+      "checksum": null
+    },
+    "hf://datasets/batterydata/pos_tagging@4cae50882a24a955155db7d170b571e93ab8102f/test.json": {
+      "num_bytes": 600550,
+      "checksum": null
+    }
+  },
+  "download_size": 5654901,
+  "features": {
+    "prompt": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "response": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "task": {
+      "dtype": "string",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 11077075,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 4844935,
+      "num_examples": 13054,
+      "dataset_name": "pos_tagging"
+    },
+    "test": {
+      "name": "test",
+      "num_bytes": 577239,
+      "num_examples": 1451,
+      "dataset_name": "pos_tagging"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}

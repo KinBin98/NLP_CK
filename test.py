@@ -68,7 +68,11 @@ def predict_batch(model, tokenizer, prompts, task_type="classification", max_new
         max_new_tokens = 20
         temperature = 0.1
         do_sample = False
-    else:
+    elif task_type == "token_classification":
+        max_new_tokens = 200
+        temperature = 0.1
+        do_sample = False
+    else:  # classification
         max_new_tokens = 5
         temperature = 0.1
         do_sample = False
@@ -79,7 +83,7 @@ def predict_batch(model, tokenizer, prompts, task_type="classification", max_new
         padding=True, 
         truncation=True,
         max_length=1024,
-        padding_side='left'  # ← GIỐNG BASELINE
+        padding_side='left'
     ).to(model.device)
     
     outputs = model.generate(
@@ -106,6 +110,10 @@ def predict_batch(model, tokenizer, prompts, task_type="classification", max_new
             cleaned.append(match.group(0) if match else "")
         elif task_type == "qa":
             cleaned.append(d if d else "")
+        elif task_type == "token_classification":  # ← THÊM XỬ LÝ CHO POS
+            # POS tags là space-separated, có thể chứa nhiều tags
+            # Lấy toàn bộ, chỉ cắt bỏ khoảng trắng 2 đầu
+            cleaned.append(d.strip() if d else "")
     
     return cleaned
 

@@ -16,26 +16,6 @@ class TaskConfig:
 
 TASKS = [
     TaskConfig(
-        name="sst2",
-        full_name="SST-2",
-        dataset="glue",
-        text_fields=["sentence"],
-        label_field="label",
-        label_map={0: "negative", 1: "positive"},
-        task_type="classification",
-        metric="accuracy",
-    ),
-    TaskConfig(
-        name="mnli",
-        full_name="MNLI",
-        dataset="glue",
-        text_fields=["premise", "hypothesis"],
-        label_field="label",
-        label_map={0: "entailment", 1: "neutral", 2: "contradiction"},
-        task_type="classification",
-        metric="accuracy",
-    ),
-    TaskConfig(
         name="cola",
         full_name="CoLA",
         dataset="gokuls/glue_augmented_cola",
@@ -66,13 +46,13 @@ TASKS = [
         metric="f1",
     ),
     TaskConfig(
-        name="ag_news",
-        full_name="AG News",
-        dataset="ag_news",
-        text_fields=["text"],
-        label_field="label",
-        label_map={0: "World", 1: "Sports", 2: "Business", 3: "Sci/Tech"},
-        task_type="classification",
+        name="pos",
+        full_name="POS Tagging",
+        dataset="batterydata/pos_tagging",
+        text_fields=["tokens"],
+        label_field="upos",
+        label_map=None,
+        task_type="token_classification",
         metric="accuracy",
     ),
 ]
