@@ -69,7 +69,7 @@ def predict_batch(model, tokenizer, prompts, task_type="classification", max_new
         temperature = 0.1
         do_sample = False
     elif task_type == "token_classification":
-        max_new_tokens = 200
+        max_new_tokens = 100
         temperature = 0.1
         do_sample = False
     else:  # classification

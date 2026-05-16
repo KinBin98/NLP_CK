@@ -28,6 +28,29 @@ def regression_metrics(y_true, y_pred):
     }
 
 
+def token_classification_metrics(y_true, y_pred):
+    """Đánh giá cho POS Tagging (token-level)"""
+    total_correct = 0
+    total_tokens = 0
+    
+    for true_tags, pred_tags in zip(y_true, y_pred):
+        true_list = true_tags.split() if isinstance(true_tags, str) else true_tags
+        pred_list = pred_tags.split() if isinstance(pred_tags, str) else pred_tags
+        
+        for t_true, t_pred in zip(true_list, pred_list):
+            if t_true == t_pred:
+                total_correct += 1
+            total_tokens += 1
+    
+    accuracy = total_correct / total_tokens if total_tokens > 0 else 0.0
+    
+    return {
+        "token_accuracy": accuracy,
+        "correct_tokens": total_correct,
+        "total_tokens": total_tokens,
+    }
+
+
 def _normalize_answer(text):
     if text is None:
         return ""

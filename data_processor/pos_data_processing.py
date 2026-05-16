@@ -4,19 +4,16 @@ from datasets import DatasetDict, concatenate_datasets, load_dataset
 
 
 def make_prompt(example):
-    """Tạo prompt cho POS Tagging với Penn Treebank tags"""
+    """Tạo prompt tối ưu cho POS Tagging"""
     tokens = example.get('tokens', [])
     sentence = ' '.join(tokens)
     
     return f"""Task: POS Tagging
 
-Tag each word with its POS tag.
+Output ONLY the POS tags, space-separated, one tag per word, no explanation .
 
-Tags: NN, NNS, NNP, NNPS, VB, VBD, VBG, VBN, VBP, VBZ, JJ, JJR, JJS, RB, RBR, RBS, WRB, DT, PDT, WDT, IN, TO, PRP, PRP$, WP, WP$, CC, CD, RP, POS, ., ,, !, ?, :, ;, (, ), XX
-
-Sentence: {sentence}
-
-Tags:"""
+Input: {sentence}
+Output:"""
 
 
 def format_pos_tags(tags):
@@ -117,6 +114,7 @@ def build_pos_dataset(output_dir="data/pos", max_train=8000, max_val=0, max_test
         sample = ds["train"][0]
         print(f"  Task: {sample['task']}")
         print(f"  Response: '{sample['response'][:100]}...'")
+        print(f"  Prompt: {sample['prompt'][:200]}...")
     
     return ds
 
