@@ -1,4 +1,5 @@
-# train.py - CORRECT VERSION (match với baseline test.py)
+# train.py - FIXED VERSION (NO EVALUATION)
+
 import argparse
 import os
 import torch
@@ -11,7 +12,7 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from scipy.stats import pearsonr
-from unsloth.chat_templates import get_chat_template  # ← THÊM IMPORT NÀY
+from unsloth.chat_templates import get_chat_template
 
 from config import DEFAULT_MODEL, OUTPUT_DIR, SEED, TASKS
 
@@ -25,9 +26,8 @@ def load_model(model_name, max_seq_length, gradient_checkpointing):
     )
     
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    # ⚠️ QUAN TRỌNG: DÙNG get_chat_template GIỐNG test.py
     tokenizer = get_chat_template(tokenizer, chat_template="qwen3-instruct")
-    tokenizer.padding_side = 'left'  # ← GIỐNG test.py
+    tokenizer.padding_side = 'left'
     tokenizer.pad_token = tokenizer.eos_token
     
     model = AutoModelForCausalLM.from_pretrained(
@@ -43,10 +43,10 @@ def load_model(model_name, max_seq_length, gradient_checkpointing):
         model.config.use_cache = False
     
     lora_config = LoraConfig(
-        r=16,  # Tăng lên 32
-        lora_alpha=32,  # Tăng lên 64
+        r=16,
+        lora_alpha=32,
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        lora_dropout=0.05,  # Giảm dropout
+        lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
     )
@@ -56,7 +56,6 @@ def load_model(model_name, max_seq_length, gradient_checkpointing):
 
 
 def format_and_tokenize(examples, tokenizer, max_seq_length):
-    """Format GIỐNG với cách test.py sẽ predict"""
     all_input_ids = []
     all_attention_masks = []
     all_labels = []
@@ -65,7 +64,6 @@ def format_and_tokenize(examples, tokenizer, max_seq_length):
         if not r or len(r.strip()) == 0:
             continue
         
-        # ⚠️ FORMAT GIỐNG test.py: CHỈ user message, KHÔNG có assistant
         messages = [{"role": "user", "content": p.strip()}]
         prompt_text = tokenizer.apply_chat_template(
             messages, 
@@ -73,10 +71,7 @@ def format_and_tokenize(examples, tokenizer, max_seq_length):
             add_generation_prompt=True
         )
         
-        # Response là text cần học (0, 1, hoặc câu trả lời)
         response_text = r.strip()
-        
-        # Ghép prompt + response + eos
         full_text = prompt_text + response_text + tokenizer.eos_token
         
         full_tokenized = tokenizer(full_text, truncation=True, padding=False, max_length=max_seq_length)
@@ -104,19 +99,18 @@ def format_and_tokenize(examples, tokenizer, max_seq_length):
     }
 
 
-
-
 def main(args):
     set_seed(SEED)
 
     print("=" * 60)
-    print("🚀 STARTING TRAINING - MATCHING BASELINE")
+    print("🚀 STARTING TRAINING - NO VALIDATION (FIXED)")
     print("=" * 60)
     print(f"📌 Task: {args.task}")
     print(f"📌 Max seq length: {args.max_seq_length}")
     print(f"📌 Batch size: {args.batch_size}")
     print(f"📌 Num epochs: {args.num_epochs}")
     print(f"📌 Learning rate: {args.learning_rate}")
+    print("⚠️ Validation DISABLED to avoid CUDA error")
     print("=" * 60)
 
     # Load dataset
@@ -126,11 +120,9 @@ def main(args):
     train_ds = train_ds.filter(lambda ex: ex["response"] and len(ex["response"].strip()) > 0)
     print(f"Training samples: {len(train_ds)}")
     
+    # KHÔNG DÙNG VALIDATION
     eval_ds = None
-    if "validation" in dataset:
-        eval_ds = dataset["validation"].filter(lambda ex: ex["task"] == args.task)
-        eval_ds = eval_ds.filter(lambda ex: ex["response"] and len(ex["response"].strip()) > 0)
-        print(f"Validation samples: {len(eval_ds)}")
+    print("⚠️ No validation set (disabled to prevent CUDA crash)")
 
     # Load model
     model, tokenizer = load_model(
@@ -148,16 +140,8 @@ def main(args):
     )
     train_ds = train_ds.filter(lambda ex: len(ex["input_ids"]) > 0)
     print(f"After tokenization: {len(train_ds)} samples")
-    
-    if eval_ds:
-        eval_ds = eval_ds.map(
-            lambda x: format_and_tokenize(x, tokenizer, args.max_seq_length),
-            batched=True,
-            remove_columns=eval_ds.column_names
-        )
-        eval_ds = eval_ds.filter(lambda ex: len(ex["input_ids"]) > 0)
 
-    # Training
+    # TRAINING ARGS - TẮT HOÀN TOÀN EVALUATION
     training_args = TrainingArguments(
         output_dir=os.path.join(args.output_dir, f"single_{args.task}"),
         per_device_train_batch_size=args.batch_size,
@@ -168,12 +152,12 @@ def main(args):
         fp16=True,
         logging_steps=args.logging_steps,
 
-        save_strategy="epoch",
-        eval_strategy="epoch",
-
-        load_best_model_at_end=True,   # ← thêm dòng này
-        metric_for_best_model="eval_loss",  # ← thêm
-        greater_is_better=False,       # ← thêm
+        save_strategy="epoch",           # Vẫn save model mỗi epoch
+        eval_strategy="no",              # ← QUAN TRỌNG: TẮT VALIDATION
+        
+        load_best_model_at_end=False,    # ← TẮT VÌ KHÔNG CÓ EVAL
+        # metric_for_best_model="eval_loss",  # ← COMMENT
+        # greater_is_better=False,           # ← COMMENT
 
         gradient_checkpointing=args.gradient_checkpointing,
         optim="adamw_8bit",
@@ -193,14 +177,14 @@ def main(args):
         model=model,
         args=training_args,
         train_dataset=train_ds,
-        eval_dataset=eval_ds if eval_ds and len(eval_ds) > 0 else None,
+        eval_dataset=None,               # ← KHÔNG CÓ VALIDATION
         data_collator=data_collator,
     )
     
-    print("\n🎯 Starting training...")
+    print("\n🎯 Starting training (no validation, will save after each epoch)...")
     trainer.train()
     
-    # Save
+    # Save final model
     output_dir = os.path.join(args.output_dir, f"single_{args.task}_final")
     os.makedirs(output_dir, exist_ok=True)
     trainer.model.save_pretrained(output_dir)
@@ -216,14 +200,13 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default=OUTPUT_DIR)
     parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL)
     
-    # ⚠️ QUAN TRỌNG: Match với test.py
-    parser.add_argument("--max_seq_length", type=int, default=256)  # 1024 như test.py
+    parser.add_argument("--max_seq_length", type=int, default=256)
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--gradient_accumulation", type=int, default=2)
     parser.add_argument("--gradient_checkpointing", action="store_true", default=True)
     
-    parser.add_argument("--learning_rate", type=float, default=2e-4)  # Cao hơn
-    parser.add_argument("--num_epochs", type=int, default=5)  # Nhiều epochs hơn
+    parser.add_argument("--learning_rate", type=float, default=2e-4)
+    parser.add_argument("--num_epochs", type=int, default=5)
     parser.add_argument("--warmup_ratio", type=float, default=0.03)
     parser.add_argument("--logging_steps", type=int, default=10)
     
