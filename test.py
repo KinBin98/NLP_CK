@@ -213,7 +213,9 @@ def main(args):
                     all_preds[orig_idx] = _label_to_id(task_obj, pred)
                 elif task_type == "qa":
                     all_preds[orig_idx] = pred
-                else:
+                elif task_type == "token_classification":  # ← THÊM NHÁNH NÀY
+                    all_preds[orig_idx] = pred  # pred đã được cleaned từ predict_batch
+                else:  # regression
                     try:
                         all_preds[orig_idx] = round(float(pred), 1) if pred else None
                     except:
