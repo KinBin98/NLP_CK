@@ -243,7 +243,7 @@ def main(args):
     for row in rows:
         task_counts[row["task"]] += 1
     
-    print(f"\n✅ Saved {len(rows)} predictions to {args.output_file}")
+    print(f"\n Saved {len(rows)} predictions to {args.output_file}")
     print(f"\n📊 Task distribution:")
     for task, count in sorted(task_counts.items()):
         print(f"  {task}: {count} samples")

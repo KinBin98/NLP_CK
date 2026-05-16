@@ -1,4 +1,4 @@
-# train.py - FIXED VERSION (NO EVALUATION)
+# train.py - CHỈ SỬA 2 DÒNG
 
 import argparse
 import os
@@ -15,7 +15,6 @@ from scipy.stats import pearsonr
 from unsloth.chat_templates import get_chat_template
 
 from config import DEFAULT_MODEL, OUTPUT_DIR, SEED, TASKS
-
 
 def load_model(model_name, max_seq_length, gradient_checkpointing):
     bnb_config = BitsAndBytesConfig(
@@ -103,26 +102,29 @@ def main(args):
     set_seed(SEED)
 
     print("=" * 60)
-    print("🚀 STARTING TRAINING - NO VALIDATION (FIXED)")
+    print(" STARTING TRAINING - NO VALIDATION (FIXED)")
     print("=" * 60)
-    print(f"📌 Task: {args.task}")
-    print(f"📌 Max seq length: {args.max_seq_length}")
-    print(f"📌 Batch size: {args.batch_size}")
-    print(f"📌 Num epochs: {args.num_epochs}")
-    print(f"📌 Learning rate: {args.learning_rate}")
-    print("⚠️ Validation DISABLED to avoid CUDA error")
+    print(f" Task: {args.task}")
+    print(f" Max seq length: {args.max_seq_length}")
+    print(f" Batch size: {args.batch_size}")
+    print(f" Num epochs: {args.num_epochs}")
+    print(f" Learning rate: {args.learning_rate}")
+    print(" Validation DISABLED to avoid CUDA error")
     print("=" * 60)
 
     # Load dataset
     dataset = load_from_disk(args.dataset_dir)
     
-    train_ds = dataset["train"].filter(lambda ex: ex["task"] == args.task)
+    if args.task == "multi_task":
+        train_ds = dataset["train"]
+    else:
+        train_ds = dataset["train"].filter(lambda ex: ex["task"] == args.task)
+    
     train_ds = train_ds.filter(lambda ex: ex["response"] and len(ex["response"].strip()) > 0)
     print(f"Training samples: {len(train_ds)}")
     
-    # KHÔNG DÙNG VALIDATION
     eval_ds = None
-    print("⚠️ No validation set (disabled to prevent CUDA crash)")
+    print(" No validation set (disabled to prevent CUDA crash)")
 
     # Load model
     model, tokenizer = load_model(
@@ -141,9 +143,14 @@ def main(args):
     train_ds = train_ds.filter(lambda ex: len(ex["input_ids"]) > 0)
     print(f"After tokenization: {len(train_ds)} samples")
 
-    # TRAINING ARGS - TẮT HOÀN TOÀN EVALUATION
+    # 🔹 SỬA DÒNG 2: Tên output directory
+    if args.task == "multi_task":
+        output_subdir = "multi_task"
+    else:
+        output_subdir = f"single_{args.task}"
+    
     training_args = TrainingArguments(
-        output_dir=os.path.join(args.output_dir, f"single_{args.task}"),
+        output_dir=os.path.join(args.output_dir, output_subdir),
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation,
         warmup_ratio=args.warmup_ratio,
@@ -152,12 +159,9 @@ def main(args):
         fp16=True,
         logging_steps=args.logging_steps,
 
-        save_strategy="epoch",           # Vẫn save model mỗi epoch
-        eval_strategy="no",              # ← QUAN TRỌNG: TẮT VALIDATION
-        
-        load_best_model_at_end=False,    # ← TẮT VÌ KHÔNG CÓ EVAL
-        # metric_for_best_model="eval_loss",  # ← COMMENT
-        # greater_is_better=False,           # ← COMMENT
+        save_strategy="epoch",
+        eval_strategy="no",
+        load_best_model_at_end=False,
 
         gradient_checkpointing=args.gradient_checkpointing,
         optim="adamw_8bit",
@@ -177,26 +181,26 @@ def main(args):
         model=model,
         args=training_args,
         train_dataset=train_ds,
-        eval_dataset=None,               # ← KHÔNG CÓ VALIDATION
+        eval_dataset=None,
         data_collator=data_collator,
     )
     
-    print("\n🎯 Starting training (no validation, will save after each epoch)...")
+    print("\n🎯 Starting training...")
     trainer.train()
     
     # Save final model
-    output_dir = os.path.join(args.output_dir, f"single_{args.task}_final")
+    output_dir = os.path.join(args.output_dir, f"{output_subdir}_final")
     os.makedirs(output_dir, exist_ok=True)
     trainer.model.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
     
-    print(f"\n✅ Model saved to {output_dir}")
+    print(f"\n Model saved to {output_dir}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_dir", type=str, default="data/cola")
-    parser.add_argument("--task", type=str, default="cola")
+    parser.add_argument("--task", type=str, default="multi_task")  
     parser.add_argument("--output_dir", type=str, default=OUTPUT_DIR)
     parser.add_argument("--model_name", type=str, default=DEFAULT_MODEL)
     

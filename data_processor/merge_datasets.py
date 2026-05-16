@@ -10,6 +10,7 @@ TASK_FOLDERS = {
     "cola": "data/data_cola",
     "stsb": "data/data_stsb",
     "squad": "data/data_squad",
+    "pos": "data/data_pos",
 }
 
 

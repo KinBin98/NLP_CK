@@ -29,7 +29,6 @@ def regression_metrics(y_true, y_pred):
 
 
 def token_classification_metrics(y_true, y_pred):
-    """Đánh giá cho POS Tagging (token-level) - KHÔNG PHÂN BIỆT HOA THƯỜNG"""
     total_correct = 0
     total_tokens = 0
     
