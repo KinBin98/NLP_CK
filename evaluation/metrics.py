@@ -29,18 +29,23 @@ def regression_metrics(y_true, y_pred):
 
 
 def token_classification_metrics(y_true, y_pred):
-    """Đánh giá cho POS Tagging (token-level)"""
+    """Đánh giá cho POS Tagging (token-level) - KHÔNG PHÂN BIỆT HOA THƯỜNG"""
     total_correct = 0
     total_tokens = 0
     
     for true_tags, pred_tags in zip(y_true, y_pred):
-        true_list = true_tags.split() if isinstance(true_tags, str) else true_tags
-        pred_list = pred_tags.split() if isinstance(pred_tags, str) else pred_tags
+        # Chuyển sang uppercase để so sánh
+        true_list = str(true_tags).upper().split()
+        pred_list = str(pred_tags).upper().split()
         
-        for t_true, t_pred in zip(true_list, pred_list):
-            if t_true == t_pred:
+        min_len = min(len(true_list), len(pred_list))
+        for i in range(min_len):
+            if true_list[i] == pred_list[i]:
                 total_correct += 1
             total_tokens += 1
+        
+        # Tính tokens bị thiếu hoặc thừa
+        total_tokens += abs(len(true_list) - len(pred_list))
     
     accuracy = total_correct / total_tokens if total_tokens > 0 else 0.0
     

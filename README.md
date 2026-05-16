@@ -25,12 +25,10 @@ The code expects a GPU and uses `unsloth`, `trl`, `transformers`, and `datasets`
 Build each dataset into the `data/` tree:
 
 ```bash
-python data_processor/sst2_data_processing.py --output_dir data/data_sst2_v2
-python data_processor/mnli_data_processing.py --output_dir data/data_mnli
 python data_processor/cola_data_processing.py --output_dir data/data_cola
 python data_processor/stsb_data_processing.py --output_dir data/data_stsb
 python data_processor/squad_data_processing.py --output_dir data/data_squad
-python data_processor/ag_news_data_processing.py --output_dir data/data_ag_news
+
 ```
 
 Merge them into one dataset:

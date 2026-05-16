@@ -4,13 +4,14 @@ from datasets import DatasetDict, concatenate_datasets, load_dataset
 
 
 def make_prompt(example):
-    """Tạo prompt tối ưu cho POS Tagging"""
     tokens = example.get('tokens', [])
     sentence = ' '.join(tokens)
     
     return f"""Task: POS Tagging
 
 Output ONLY the POS tags, space-separated, one tag per word, no explanation .
+
+Valid tags: DT, NN, VBZ, IN, PRP, VBP, VB, JJ, RB, CC, CD, NNS, VBD, VBG, VBN, TO
 
 Input: {sentence}
 Output:"""
