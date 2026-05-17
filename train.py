@@ -1,4 +1,4 @@
-# train.py - CHỈ SỬA 2 DÒNG
+# train.py - THÊM RESUME CHECKPOINT (OFF BY DEFAULT)
 
 import argparse
 import os
@@ -102,14 +102,14 @@ def main(args):
     set_seed(SEED)
 
     print("=" * 60)
-    print(" STARTING TRAINING - NO VALIDATION (FIXED)")
+    print(" STARTING TRAINING")
     print("=" * 60)
     print(f" Task: {args.task}")
     print(f" Max seq length: {args.max_seq_length}")
     print(f" Batch size: {args.batch_size}")
     print(f" Num epochs: {args.num_epochs}")
     print(f" Learning rate: {args.learning_rate}")
-    print(" Validation DISABLED to avoid CUDA error")
+    print(f" Resume mode: {args.resume if args.resume else 'False (training from scratch)'}")
     print("=" * 60)
 
     # Load dataset
@@ -143,7 +143,7 @@ def main(args):
     train_ds = train_ds.filter(lambda ex: len(ex["input_ids"]) > 0)
     print(f"After tokenization: {len(train_ds)} samples")
 
-    # 🔹 SỬA DÒNG 2: Tên output directory
+    # Tên output directory
     if args.task == "multi_task":
         output_subdir = "multi_task"
     else:
@@ -162,6 +162,7 @@ def main(args):
         save_strategy="epoch",
         eval_strategy="no",
         load_best_model_at_end=False,
+        save_total_limit=2,  # Giữ 2 checkpoint gần nhất
 
         gradient_checkpointing=args.gradient_checkpointing,
         optim="adamw_8bit",
@@ -185,16 +186,52 @@ def main(args):
         data_collator=data_collator,
     )
     
+    # 🔥 XỬ LÝ RESUME CHECKPOINT 🔥
+    resume_checkpoint = None
+    
+    if args.resume:
+        # Nếu user chỉ định đường dẫn cụ thể
+        if args.resume != "auto":
+            if os.path.exists(args.resume):
+                resume_checkpoint = args.resume
+                print(f"✅ Resuming from specified checkpoint: {resume_checkpoint}")
+            else:
+                print(f"⚠️ Checkpoint not found: {args.resume}")
+                print("   Starting training from scratch instead...")
+        else:
+            # Tự động tìm checkpoint mới nhất trong output_dir
+            output_dir = training_args.output_dir
+            if os.path.exists(output_dir):
+                checkpoints = [d for d in os.listdir(output_dir) if d.startswith("checkpoint-")]
+                if checkpoints:
+                    # Lấy checkpoint có số lớn nhất
+                    def get_step(cp):
+                        try:
+                            return int(cp.split("-")[1])
+                        except:
+                            return 0
+                    latest = sorted(checkpoints, key=get_step)[-1]
+                    resume_checkpoint = os.path.join(output_dir, latest)
+                    print(f"✅ Auto-resuming from latest checkpoint: {resume_checkpoint}")
+                else:
+                    print("⚠️ No checkpoint found in output directory")
+                    print("   Starting training from scratch...")
+    
     print("\n🎯 Starting training...")
-    trainer.train()
+    if resume_checkpoint and os.path.exists(resume_checkpoint):
+        print(f"✅ Resuming from: {resume_checkpoint}")
+        trainer.train(resume_from_checkpoint=resume_checkpoint)
+    else:
+        print("🎯 Training from scratch...")
+        trainer.train()
     
     # Save final model
-    output_dir = os.path.join(args.output_dir, f"{output_subdir}_final")
-    os.makedirs(output_dir, exist_ok=True)
-    trainer.model.save_pretrained(output_dir)
-    tokenizer.save_pretrained(output_dir)
+    final_output_dir = os.path.join(args.output_dir, f"{output_subdir}_final")
+    os.makedirs(final_output_dir, exist_ok=True)
+    trainer.model.save_pretrained(final_output_dir)
+    tokenizer.save_pretrained(final_output_dir)
     
-    print(f"\n Model saved to {output_dir}")
+    print(f"\n✅ Model saved to {final_output_dir}")
 
 
 if __name__ == "__main__":
@@ -213,6 +250,10 @@ if __name__ == "__main__":
     parser.add_argument("--num_epochs", type=int, default=5)
     parser.add_argument("--warmup_ratio", type=float, default=0.03)
     parser.add_argument("--logging_steps", type=int, default=10)
+    
+    # 👇 THÊM ARGUMENT RESUME
+    parser.add_argument("--resume", type=str, default=None,
+                       help='Resume training from checkpoint. Usage: --resume "path/to/checkpoint" or --resume "auto" to auto-find latest')
     
     args = parser.parse_args()
     main(args)
